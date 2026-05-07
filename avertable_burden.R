@@ -4,106 +4,223 @@ library(tidyverse)
 library(dplyr)
 source("utils.R")
 
+load_and_process_ihme_data <- function(
+    ihme_fitted_path = "IHME_AMR/IHME_AMR_fitted_gammas_v2.csv",
+    ihme_pathogen_path = "IHME_AMR/IHME_AMR_PATHOGEN_2019_DATA_COUNTED_AB.CSV",
+    pop_path = "population_by_country_and_year.csv",
+    consumption_path = "antibiotic_consumption_by_ATC3.csv",
+    results_path = getOption("amr_burden_results_path",
+        "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted.csv"),
+    results_bootstrap_path = getOption("amr_burden_results_bootstrap_path",
+        "Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_canonical_weighted.csv"),
+    gradients_path = getOption("amr_burden_gradients_path",
+        "Outputs/database_gradients_ATC3_PCA_canonical_weighted.csv"),
+    gradients_bootstrap_path = getOption("amr_burden_gradients_bootstrap_path",
+        "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted.csv")
+) {
+  ## Load the results from the linear regression
+  results <- read.csv(results_path)
+  results_bootstrap <- read.csv(results_bootstrap_path)
+
+  gradients_df <- read.csv(gradients_path)
+  gradients_bootstrap <- read.csv(gradients_bootstrap_path)
+  class_gradients <- as.vector(gradients_df[,2])
+  classes <- as.vector(gradients_df[,1])
+  names(class_gradients) <- classes
+
+  ## IHME data reformatting
+  IHME <- read.csv(ihme_fitted_path)
+  lower_region_names <- unique(iso3_ihme_mapping$lower_ihme_region)
+
+  # Disambiguate lower regions that share names with upper regions
+  # (e.g. South Asia, North Africa and Middle East) using location_id.
+  lower_region_id_map <- unique(IHME[, c("location_name", "location_id")]) %>%
+      filter(location_name %in% lower_region_names) %>%
+      group_by(location_name) %>%
+      summarise(location_id = min(location_id), .groups = "drop")
+
+  lower_region_ids <- lower_region_id_map$location_id
+
+  # Upper-region (7 super-regions) disambiguation — used for Figure 3 scenarios.
+  upper_region_names <- unique(iso3_ihme_mapping$ihme_region)
+  upper_region_id_map <- unique(IHME[, c("location_name", "location_id")]) %>%
+      filter(location_name %in% upper_region_names) %>%
+      group_by(location_name) %>%
+      summarise(location_id = min(location_id), .groups = "drop")
+  upper_region_ids <- upper_region_id_map$location_id
+
+  # Apply the mapping
+  for(atc_code in names(atc_mapping)) {
+    IHME[IHME$antibiotic_class %in% atc_mapping[[atc_code]], "antibiotic_class"] <- atc_code
+  }
+  # Save full dataset (all locations, post-atc-recode) for upper-region filtering.
+  IHME_all <- IHME
+  # keep only lower-IHME-region rows by ID (not name) to avoid collisions with
+  # identically named upper regions.
+  IHME <- IHME[IHME$location_id %in% lower_region_ids,]
+  n_regions <- length(unique(IHME$location_name))
+  # apply bacteria mapping
+  for (i in 1:nrow(IHME)) {
+      ihme_name <- IHME$pathogen[i]
+      match <- bacteria_mapping[bacteria_mapping$in_names == ihme_name, "canonical_names"]
+      if (length(match) > 0 && !is.na(match)) {
+          IHME$pathogen[i] <- match
+      }
+  }
+  # remove duplicate rows
+  IHME <- IHME[!duplicated(IHME),]
+  # remove duplicates based on "location_name","age_group_name","infectious_syndrome","pathogen","antibiotic_class"
+  IHME <- IHME %>%
+      group_by(location_name, age_group_name, infectious_syndrome, pathogen, antibiotic_class) %>%
+      slice(1) %>%
+      ungroup()
+
+  # Build upper-region IHME (Figure 3 scenarios) — same atc recode already applied.
+  IHME_upper <- IHME_all[IHME_all$location_id %in% upper_region_ids, ]
+  for (i in seq_len(nrow(IHME_upper))) {
+      ihme_name <- IHME_upper$pathogen[i]
+      match_val <- bacteria_mapping[bacteria_mapping$in_names == ihme_name, "canonical_names"]
+      if (length(match_val) > 0 && !is.na(match_val)) {
+          IHME_upper$pathogen[i] <- match_val
+      }
+  }
+  IHME_upper <- IHME_upper[!duplicated(IHME_upper), ]
+  IHME_upper <- IHME_upper %>%
+      group_by(location_name, age_group_name, infectious_syndrome, pathogen, antibiotic_class) %>%
+      slice(1) %>%
+      ungroup()
+
+  IHME_totals_raw <- read.csv(ihme_pathogen_path)
+  IHME_totals <- IHME_totals_raw
+  pop_by_country_year <- read.csv(pop_path)
+  # aggregate population by lower_ihme_region for 2018
+  pop_by_lower_ihme_region <- data.frame(
+      lower_ihme_region = unique(iso3_ihme_mapping$lower_ihme_region),
+      population_2018 = numeric(length(unique(iso3_ihme_mapping$lower_ihme_region)))
+  )
+  lower_ihme_regions_for_pop <- unique(iso3_ihme_mapping$lower_ihme_region)
+  for (i in seq_along(lower_ihme_regions_for_pop)) {
+      region <- lower_ihme_regions_for_pop[i]
+      countries_in_region <- unique(iso3_ihme_mapping$iso3[
+          iso3_ihme_mapping$lower_ihme_region == region])
+      total_population <- sum(pop_by_country_year[
+          pop_by_country_year$Country.Code %in% countries_in_region, "X2018"])
+      pop_by_lower_ihme_region$population_2018[i] <- total_population
+  }
+  write.csv(pop_by_lower_ihme_region,
+      "Outputs/population_by_lower_ihme_region_2018.csv",
+      row.names = FALSE)
+
+  locations <- lower_region_names
+  IHME_totals <- IHME_totals %>%
+    filter(location_id %in% lower_region_ids) %>%
+    select(-location_id) %>%
+    distinct()
+  total_burden <- sum(IHME_totals$val)
+  print(total_burden)
+
+  # total burden by lower-IHME-region
+  total_burden_by_region <- data.frame(
+      region = unique(IHME_totals$location_name),
+      total_burden = numeric(length(unique(IHME_totals$location_name))),
+      population = numeric(length(unique(IHME_totals$location_name)))
+  )
+  for (loc in unique(IHME_totals$location_name)){
+      region_burden <- sum(IHME_totals[IHME_totals$location_name == loc, "val"])
+      total_burden_by_region$total_burden[total_burden_by_region$region == loc] <- region_burden
+      population <- pop_by_lower_ihme_region$population_2018[
+          pop_by_lower_ihme_region$lower_ihme_region == loc]
+      total_burden_by_region$population[total_burden_by_region$region == loc] <- population
+      print(paste0("Burden in ",loc,": ",region_burden))
+  }
+  # save total burden by lower-IHME-region
+  write.csv(total_burden_by_region, "Outputs/total_bacterial_disease_burden_by_lower_ihme_region_v2.csv", row.names = FALSE)
+
+  # Upper-region burden totals (for Figure 3 scenario weighting)
+  IHME_totals_upper <- IHME_totals_raw %>%
+      filter(location_id %in% upper_region_ids) %>%
+      select(-location_id) %>%
+      distinct()
+  # Population by upper IHME region (7 super-regions)
+  pop_by_ihme_region <- data.frame(
+      ihme_region = upper_region_names,
+      population_2018 = numeric(length(upper_region_names))
+  )
+  for (i in seq_along(upper_region_names)) {
+      region <- upper_region_names[i]
+      countries_in_region <- unique(iso3_ihme_mapping$iso3[
+          iso3_ihme_mapping$ihme_region == region])
+      pop_by_ihme_region$population_2018[i] <- sum(pop_by_country_year[
+          pop_by_country_year$Country.Code %in% countries_in_region, "X2018"])
+  }
+  total_burden_by_region_upper <- data.frame(
+      region       = unique(IHME_totals_upper$location_name),
+      total_burden = numeric(length(unique(IHME_totals_upper$location_name))),
+      population   = numeric(length(unique(IHME_totals_upper$location_name)))
+  )
+  for (loc in unique(IHME_totals_upper$location_name)) {
+      region_burden <- sum(IHME_totals_upper[IHME_totals_upper$location_name == loc, "val"])
+      total_burden_by_region_upper$total_burden[
+          total_burden_by_region_upper$region == loc] <- region_burden
+      population <- pop_by_ihme_region$population_2018[
+          pop_by_ihme_region$ihme_region == loc]
+      total_burden_by_region_upper$population[
+          total_burden_by_region_upper$region == loc] <- population
+  }
+
+  proportion_attributable_total <- sum(IHME$true_val_att)/(sum(IHME_totals$val))
+  print(paste0("Total bacterial disease burden: ", total_burden))
+  print(paste0("Proportion attributable to resistant infections: ", proportion_attributable_total))
+
+  consumption <- read.csv(consumption_path)
+  # filter consumption to location rows that are in iso3_ihme_mapping$ihme_region
+  consumption <- consumption[consumption$Year == 2018,]
+  consumption <- consumption %>%
+      rename(
+          Antibiotic = ATC.level.3.class,
+          Consumption = Antibiotic.consumption..DDD.1.000.day.
+      )
+  # crop antibiotic name before hyphen
+  consumption$Antibiotic <- sub("-.*", "", consumption$Antibiotic)
+  global_consumption <- consumption[consumption$Location == "Global",]
+  consumption <- consumption[consumption$Location %in% iso3_ihme_mapping$ihme_region,]
+
+  return(list(
+    IHME = IHME,
+    IHME_upper = IHME_upper,
+    IHME_totals = IHME_totals,
+    results = results,
+    results_bootstrap = results_bootstrap,
+    class_gradients = class_gradients,
+    classes = classes,
+    gradients_bootstrap = gradients_bootstrap,
+    pop_by_lower_ihme_region = pop_by_lower_ihme_region,
+    pop_by_country_year = pop_by_country_year,
+    total_burden_by_region = total_burden_by_region,
+    total_burden_by_region_upper = total_burden_by_region_upper,
+    consumption = consumption,
+    global_consumption = global_consumption,
+    proportion_attributable_total = proportion_attributable_total
+  ))
+}
+
 ## Load the results from the linear regression
-results <- read.csv("Outputs/database_gradients_pathogen_ATC3_PCA_joelike_weighted.csv")
-results_bootstrap <- read.csv("Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_joelike_weighted.csv")
-
-gradients_df <- read.csv("Outputs/database_gradients_ATC3_PCA_joelike_weighted.csv")
-gradients_bootstrap <- read.csv("Outputs/database_gradients_bootstraps_ATC3_PCA_joelike_weighted.csv")
-class_gradients <- as.vector(gradients_df[,2])
-classes <- as.vector(gradients_df[,1])
-names(class_gradients) <- classes
-
-## IHME data reformatting
-IHME <- read.csv("IHME_AMR/IHME_AMR_fitted_gammas_v2.csv")
-# Apply the mapping
-for(atc_code in names(atc_mapping)) {
-  IHME[IHME$antibiotic_class %in% atc_mapping[[atc_code]], "antibiotic_class"] <- atc_code
-}
-# only keep rows where location is in iso3_ihme_mapping$ihme_region
-IHME <- IHME[IHME$location_name %in% iso3_ihme_mapping$ihme_region,]
-n_regions <- length(unique(IHME$location_name))
-# apply bacteria mapping
-for (i in 1:nrow(IHME)) {
-    ihme_name <- IHME$pathogen[i]
-    match <- bacteria_mapping[bacteria_mapping$in_names == ihme_name, "joe_names"]
-    if (length(match) > 0 && !is.na(match)) {
-        IHME$pathogen[i] <- match
-    }
-}
-# remove duplicate rows
-IHME <- IHME[!duplicated(IHME),]
-# remove duplicates based on "location_name","age_group_name","infectious_syndrome","pathogen","antibiotic_class"
-IHME <- IHME %>%
-    group_by(location_name, age_group_name, infectious_syndrome, pathogen, antibiotic_class) %>%
-    slice(1) %>%
-    ungroup()
-# IHME_totals <- IHME %>%
-#     group_by(location_name, age_group_name, infectious_syndrome, pathogen) %>%
-#     slice(1) %>%
-#     ungroup()
-# total_burden <- sum(IHME_totals$true_val_all)
-
-IHME_totals <- read.csv("IHME_AMR/IHME_AMR_PATHOGEN_2019_DATA_COUNTED_AB.CSV")
-pop_by_country_year <- read.csv("population_by_country_and_year.csv")
-# aggregate population by ihme_region for 2018. years are columns
-pop_by_ihme_region <- data.frame(
-    ihme_region = unique(iso3_ihme_mapping$ihme_region),
-    population_2018 = numeric(length(unique(iso3_ihme_mapping$ihme_region)))
-)
-ihme_regions <- unique(iso3_ihme_mapping$ihme_region)
-for (i in seq_along(ihme_regions)) {
-    region <- ihme_regions[i]
-    countries_in_region <- unique(iso3_ihme_mapping$iso3[
-        iso3_ihme_mapping$ihme_region == region])
-    total_population <- sum(pop_by_country_year[
-        pop_by_country_year$Country.Code %in% countries_in_region, "X2018"])
-    pop_by_ihme_region$population_2018[i] <- total_population
-}
-write.csv(pop_by_ihme_region,
-    "Outputs/population_by_ihme_region_2018.csv",
-    row.names = FALSE)
-# IHME_totals <- IHME_totals[IHME_totals$location_name %in% iso3_ihme_mapping$ihme_region,]
-# IHME_totals <- IHME_totals[!duplicated(IHME_totals),]
-locations <- unique(iso3_ihme_mapping$ihme_region)
-IHME_totals <- IHME_totals %>%
-  filter(location_name %in% locations) %>%
-  select(-location_id) %>%
-  distinct()
-total_burden <- sum(IHME_totals$val)
-print(total_burden)
-# total burden by location
-total_burden_by_region <- data.frame(
-    region = unique(IHME_totals$location_name),
-    total_burden = numeric(length(unique(IHME_totals$location_name))),
-    population = numeric(length(unique(IHME_totals$location_name)))
-)
-for (loc in unique(IHME_totals$location_name)){
-    region_burden <- sum(IHME_totals[IHME_totals$location_name == loc, "val"])
-    total_burden_by_region$total_burden[total_burden_by_region$region == loc] <- region_burden
-    population <- pop_by_ihme_region$population_2018[
-        pop_by_ihme_region$ihme_region == loc]
-    total_burden_by_region$population[total_burden_by_region$region == loc] <- population
-    print(paste0("Burden in ",loc,": ",region_burden))
-}
-# save total burden by region
-write.csv(total_burden_by_region, "Outputs/total_bacterial_disease_burden_by_ihme_region_v2.csv", row.names = FALSE)
-proportion_attributable_total <- sum(IHME$true_val_att)/(sum(IHME_totals$val))
-print(paste0("Total bacterial disease burden: ", total_burden))
-print(paste0("Proportion attributable to resistant infections: ", proportion_attributable_total))
-
-consumption <- read.csv("antibiotic_consumption_by_ATC3.csv")
-# filter consumption to location rows that are in iso3_ihme_mapping$ihme_region
-consumption <- consumption[consumption$Year == 2018,]
-consumption <- consumption %>%
-    rename(
-        Antibiotic = ATC.level.3.class,
-        Consumption = Antibiotic.consumption..DDD.1.000.day.
-    )
-# crop antibiotic name before hyphen
-consumption$Antibiotic <- sub("-.*", "", consumption$Antibiotic)
-global_consumption <- consumption[consumption$Location == "Global",]
-consumption <- consumption[consumption$Location %in% iso3_ihme_mapping$ihme_region,]
+data_loaded <- load_and_process_ihme_data()
+IHME <- data_loaded$IHME
+IHME_totals <- data_loaded$IHME_totals
+results <- data_loaded$results
+results_bootstrap <- data_loaded$results_bootstrap
+class_gradients <- data_loaded$class_gradients
+classes <- data_loaded$classes
+gradients_bootstrap <- data_loaded$gradients_bootstrap
+pop_by_lower_ihme_region <- data_loaded$pop_by_lower_ihme_region
+pop_by_country_year <- data_loaded$pop_by_country_year
+total_burden_by_region <- data_loaded$total_burden_by_region
+IHME_upper <- data_loaded$IHME_upper
+total_burden_by_region_upper <- data_loaded$total_burden_by_region_upper
+consumption <- data_loaded$consumption
+global_consumption <- data_loaded$global_consumption
+proportion_attributable_total <- data_loaded$proportion_attributable_total
 
 
 # Initialize with all combinations at full consumption
@@ -218,330 +335,6 @@ for (location in unique(consumption$Location)) {
 # write csv
 write.csv(pessimistic_df, "Outputs/pessimistic_proportionate_consumption_by_pathogen_location_antibiotic.csv", row.names = FALSE)
 
-
-# for each row in IHME, take true_val_att (the total attributable burden), and calculate the avertable burden with the formula burden averted = burden x (1 - gradient x 0.1 x use), using the gradient from the results table for the pathogen and antibiotic, and the use from the consumption table for the location and antibiotic
-# create new column in IHME called avertable_burden
-n_bootstraps <- 1000
-burden_bootstraps <- matrix(0, nrow = nrow(IHME), ncol = n_bootstraps)
-optimistic_burden_bootstraps <- matrix(0, nrow = nrow(IHME), ncol = n_bootstraps)
-pessimistic_burden_bootstraps <- matrix(0, nrow = nrow(IHME), ncol = n_bootstraps)
-total_burden_bootstraps <- matrix(0, nrow = nrow(IHME), ncol = n_bootstraps)
-# gamma_means <- numeric(nrow(IHME))
-# gamma_vals <- numeric(nrow(IHME))
-# gradient_means <- numeric(nrow(IHME))
-# gradient_vals <- numeric(nrow(IHME))
-
-# # random seed for reproducibility
-# set.seed(260116)
-
-# for (i in 1:nrow(IHME)) {
-#     if (i %% 10000 == 0) {
-#         print(paste("Processing row", i, "of", nrow(IHME)))
-#     }
-#     pathogen <- IHME$pathogen[i]
-#     antibiotic <- IHME$antibiotic_class[i]
-#     location <- IHME$location_name[i]
-#     # print(paste(pathogen, antibiotic, location))
-#     if (is.na(pathogen) || is.na(antibiotic) || is.na(location)) {
-#         next
-#     }
-#     # # check that location is in consumption
-#     # if (!location %in% consumption$Location) {
-#     #     next
-#     # }
-#     if (antibiotic == "Other"){
-#         next
-#     }
-#     # gamma_means[i] <- mean(value_gamma)
-#     # gamma_vals[i] <- IHME$true_val_att[i]
-#     if (!any(results$Pathogen == pathogen & results$Antibiotic == antibiotic)) {
-#         # check if antibiotic has overall result
-#         if (antibiotic %in% classes){
-#             gradients <- sample(gradients_bootstrap[gradients_bootstrap$Antibiotic == antibiotic, "Consumption"], n_bootstraps, replace = TRUE)
-#             pathogen <- "Overall"
-#             # gradient_means[i] <- mean(gradients)
-#             # gradient_vals[i] <- class_gradients[antibiotic]
-#         } else {
-#             next
-#         }
-#     } else {
-#         gradients <- sample(results_bootstrap[results_bootstrap$Pathogen == pathogen & results_bootstrap$Antibiotic == antibiotic, "Gradient.Consumption"], n_bootstraps, replace = TRUE)
-#         # gradient_means[i] <- mean(gradients)
-#         # gradient_vals[i] <- results$Gradient[results$Pathogen == pathogen & results$Antibiotic == antibiotic]
-#     }
-#     shape_all <- IHME$shape_all[i]
-#     scale_all <- IHME$scale_all[i]
-#     a_frac <- IHME$a_frac[i]
-#     b_frac <- IHME$b_frac[i]
-#     value_gamma_all <- rgamma(n_bootstraps, shape = shape_all, scale = scale_all)
-#     value_gamma <- value_gamma_all * a_frac * b_frac
-#     # use <- consumption$Consumption[consumption$Location == location & consumption$Antibiotic == antibiotic]
-#     # global_use <- global_consumption$Consumption[global_consumption$Antibiotic == antibiotic]
-#     avertable_burden <- value_gamma * (1-exp(gradients * log(0.9)))
-#     burden_bootstraps[i,] <- avertable_burden
-#     pathogen <- "Overall"
-#     optimistic_change <- optimistic_df$ProportionateConsumption[optimistic_df$Pathogen == pathogen & optimistic_df$Location == location & optimistic_df$Antibiotic == antibiotic]
-#     if (optimistic_change == 0){
-#       optimistic_avertable_burden <- value_gamma
-#     } else {
-#       optimistic_avertable_burden <- value_gamma * (1-exp(gradients * log(optimistic_change)))
-#     }
-#     optimistic_burden_bootstraps[i,] <- optimistic_avertable_burden
-#     pessimistic_change <- pessimistic_df$ProportionateConsumption[pessimistic_df$Pathogen == pathogen & pessimistic_df$Location == location & pessimistic_df$Antibiotic == antibiotic]
-#     if (pessimistic_change == 0){
-#       pessimistic_avertable_burden <- value_gamma
-#     } else {
-#       pessimistic_avertable_burden <- value_gamma * (1-exp(gradients * log(pessimistic_change)))
-#     }
-#     pessimistic_burden_bootstraps[i,] <- pessimistic_avertable_burden
-
-#     # for (j in 1:n_bootstraps) {
-#     #     use <- consumption$Consumption[consumption$Location == location & consumption$Antibiotic == antibiotic]
-#     #     avertable_burden <- attributable_value * max(0, gradient) * 0.01 * use
-#     #     # print(gradient)
-#     #     burden_bootstraps[i,j] <- avertable_burden
-#     # }
-# }
-# # # scatter plots of means and vals
-# # colors = c("#648FFF","#DC267F","#FFB000","#785EF0","#FF832B","#000000","#648FFF","#DC267F","#FFB000","#785EF0","#FF832B", "#000000","#648FFF","#DC267F","#FFB000")
-# # shapes = c(18,18,18,18,18,18,16,16,16,16,16,16,15,15,15)
-
-# # # Create a mapping of pathogens to colors and shapes
-# # pathogen_list = c("Acinetobacter spp.", "E. faecalis", "E. faecium", "E. coli", "H. influenzae", "K. pneumoniae", "N. gonorrhoeae", "P. aeruginosa", "Proteus spp.", "Salmonella spp.", "Shigella spp.", "S. aureus", "S. agalactiae", "S. pneumoniae", "S. pyogenes")
-# # pathogen_list = sort(pathogen_list)
-# # color_mapping <- setNames(colors[1:length(pathogen_list)], pathogen_list)
-# # shape_mapping <- setNames(shapes[1:length(pathogen_list)], pathogen_list)
-
-# # ggplot(data.frame(gamma_means, gamma_vals, pathogen_class = paste(IHME$pathogen, IHME$antibiotic_class)), aes(x = gamma_means, y = gamma_vals, color = pathogen_class)) +
-# #     geom_point() +
-# #     labs(x = "Mean Value", y = "True Value") +
-# #     ggtitle("Gamma Means vs True Values by Pathogen-ATC3 Class") +
-# #     theme_minimal() +
-# #     scale_x_log10() +
-# #     scale_y_log10() +
-# #     geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +  # Add x=y line
-# #     theme(legend.position = "none")  # Remove legend
-# # ggsave("gamma_mean_vs_true_values_by_pathogen_class.png", width = 8, height = 6)
-
-# # ggplot(data.frame(gradient_means, gradient_vals, drug_class = IHME$antibiotic_class), aes(x = gradient_means, y = gradient_vals, color = drug_class)) +
-# #     geom_point() +
-# #     labs(x = "Mean Gradient Value", y = "Gradient Value") +
-# #     ggtitle("Gradient Means vs Gradient Values") +
-# #     theme_minimal() +
-# #     scale_x_log10() +
-# #     scale_y_log10() +
-# #     geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed")  # Add x=y line
-# # ggsave("gradient_means_vs_gradient_values.png", width = 8, height = 6)
-# # burden_bootstraps <- as.data.frame(burden_bootstraps)
-# colnames(optimistic_burden_bootstraps) <- paste0("bootstrap_", 1:n_bootstraps)
-# write.csv(optimistic_burden_bootstraps, "Outputs/10pc_avertable_burden_bootstraps_joelike_weighted_upper_region_optimistic_overall.csv", row.names = FALSE)
-# colnames(pessimistic_burden_bootstraps) <- paste0("bootstrap_", 1:n_bootstraps)
-# write.csv(pessimistic_burden_bootstraps, "Outputs/10pc_avertable_burden_bootstraps_joelike_weighted_upper_region_pessimistic_overall.csv", row.names = FALSE)
-
-# # total avertable burden and 95% CI
-# total_avertable_burden <- colSums(optimistic_burden_bootstraps)
-# total_avertable_burden_mean <- mean(total_avertable_burden)
-# total_avertable_burden_lower <- quantile(total_avertable_burden, 0.025)
-# total_avertable_burden_upper <- quantile(total_avertable_burden, 0.975)
-# # print total avertable burden and 95% CI
-# print(paste("Total avertable burden (mean):", total_avertable_burden_mean))
-# print(paste("Total avertable burden (95% CI):", total_avertable_burden_lower, "-", total_avertable_burden_upper))
-
-# print(paste0("Proportion of total burden avertable: ", total_avertable_burden_mean / total_burden))
-# print(paste0("Proportion of attributable burden avertable: ", (total_avertable_burden_mean / total_burden)/proportion_attributable_total))
-
-# # sum bootstrap columns by region, drug, or pathogen
-# n_regions <- length(unique(IHME$location_name))
-# optimistic_burden_bootstraps_by_region <- matrix(0, nrow = n_regions, ncol = n_bootstraps)
-# for (i in 1:n_regions) {
-#     region <- unique(IHME$location_name)[i]
-#     optimistic_burden_bootstraps_by_region[i,] <- colSums(optimistic_burden_bootstraps[IHME$location_name == region,])
-# }
-# n_drugs <- length(unique(IHME$antibiotic_class))
-# optimistic_burden_bootstraps_by_drug <- matrix(0, nrow = n_drugs, ncol = n_bootstraps)
-# for (i in 1:n_drugs) {
-#     drug <- unique(IHME$antibiotic_class)[i]
-#     optimistic_burden_bootstraps_by_drug[i,] <- colSums(optimistic_burden_bootstraps[IHME$antibiotic_class == drug,])
-# }
-# n_pathogens <- length(unique(IHME$pathogen))
-# optimistic_burden_bootstraps_by_pathogen <- matrix(0, nrow = n_pathogens, ncol = n_bootstraps)
-# for (i in 1:n_pathogens) {
-#     pathogen <- unique(IHME$pathogen)[i]
-#     optimistic_burden_bootstraps_by_pathogen[i,] <- colSums(optimistic_burden_bootstraps[IHME$pathogen == pathogen,])
-# }
-# rownames(optimistic_burden_bootstraps_by_pathogen) <- unique(IHME$pathogen)
-
-# # for each pathogen get the mean and 95% CI of the avertable burden
-# avertable_by_pathogen <- data.frame(
-#     pathogen = unique(IHME$pathogen),
-#     avertable_burden = numeric(length(unique(IHME$pathogen))),
-#     lower_bound = numeric(length(unique(IHME$pathogen))),
-#     upper_bound = numeric(length(unique(IHME$pathogen)))
-# )
-# for (i in 1:n_pathogens) {
-#     avertable_by_pathogen$pathogen[i] <- unique(IHME$pathogen)[i]
-#     avertable_by_pathogen$avertable_burden[i] <- mean(optimistic_burden_bootstraps_by_pathogen[i,])
-#     avertable_by_pathogen$lower_bound[i] <- quantile(optimistic_burden_bootstraps_by_pathogen[i,], 0.025)
-#     avertable_by_pathogen$upper_bound[i] <- quantile(optimistic_burden_bootstraps_by_pathogen[i,], 0.975)
-# }
-# write.csv(avertable_by_pathogen, "Outputs/10pc_avertable_burden_by_pathogen_joelike_weighted_upper_region_optimistic_overall.csv", row.names = FALSE)
-
-# # for each region get the mean and 95% CI of the avertable burden
-# avertable_by_region <- data.frame(
-#     region = unique(IHME$location_name),
-#     avertable_burden = numeric(length(unique(IHME$location_name))),
-#     lower_bound = numeric(length(unique(IHME$location_name))),
-#     upper_bound = numeric(length(unique(IHME$location_name))),
-#     variance = numeric(length(unique(IHME$location_name))),
-#     total_burden = numeric(length(unique(IHME$location_name))),
-#     proportion_avertable = numeric(length(unique(IHME$location_name))),
-#     proportion_avertable_lower_bound = numeric(length(unique(IHME$location_name))),
-#     proportion_avertable_upper_bound = numeric(length(unique(IHME$location_name))),
-#     proportion_avertable_variance = numeric(length(unique(IHME$location_name))),
-#     avertable_burden_per_100k = numeric(length(unique(IHME$location_name))),
-#     lower_bound_per_100k = numeric(length(unique(IHME$location_name))),
-#     upper_bound_per_100k = numeric(length(unique(IHME$location_name))),
-#     variance_per_100k = numeric(length(unique(IHME$location_name)))
-# )
-# for (i in 1:n_regions) {
-#     region <- unique(IHME$location_name)[i]
-#     avertable_by_region$region[i] <- region
-#     avertable_by_region$avertable_burden[i] <- mean(optimistic_burden_bootstraps_by_region[i, ])
-#     avertable_by_region$lower_bound[i] <- quantile(optimistic_burden_bootstraps_by_region[i, ], 0.025)
-#     avertable_by_region$upper_bound[i] <- quantile(optimistic_burden_bootstraps_by_region[i, ], 0.975)
-#     avertable_by_region$variance[i] <- var(optimistic_burden_bootstraps_by_region[i, ])
-#     avertable_by_region$total_burden[i] <- total_burden_by_region[total_burden_by_region$region == region, "total_burden"]
-#     avertable_by_region$avertable_burden_per_100k[i] <- mean(optimistic_burden_bootstraps_by_region[i, ]) / (total_burden_by_region[total_burden_by_region$region == region, "population"] / 100000)
-#     avertable_by_region$lower_bound_per_100k[i] <- quantile(optimistic_burden_bootstraps_by_region[i, ], 0.025) / (total_burden_by_region[total_burden_by_region$region == region, "population"] / 100000)
-#     avertable_by_region$upper_bound_per_100k[i] <- quantile(optimistic_burden_bootstraps_by_region[i, ], 0.975) / (total_burden_by_region[total_burden_by_region$region == region, "population"] / 100000)
-#     avertable_by_region$variance_per_100k[i] <- var(optimistic_burden_bootstraps_by_region[i, ]) / ((total_burden_by_region[total_burden_by_region$region == region, "population"] / 100000)^2)
-# }
-# avertable_by_region$proportion_avertable <- avertable_by_region$avertable_burden / avertable_by_region$total_burden
-# avertable_by_region$proportion_avertable_lower_bound <- avertable_by_region$lower_bound / avertable_by_region$total_burden
-# avertable_by_region$proportion_avertable_upper_bound <- avertable_by_region$upper_bound / avertable_by_region$total_burden
-# avertable_by_region$proportion_avertable_variance <- avertable_by_region$variance / (avertable_by_region$total_burden^2)
-# write.csv(avertable_by_region, "Outputs/10pc_avertable_burden_by_region_joelike_weighted_upper_region_optimistic_overall.csv", row.names = FALSE)
-
-# # aggregate optimistic_burden_bootstraps by pathogen and region, getting mean of and
-# # 95% CI of the avertable burden
-# optimistic_burden_bootstraps_by_pathogen_and_region <- matrix(0,
-#   nrow = n_regions * n_pathogens, ncol = n_bootstraps)
-# unique_pathogens <- unique(IHME$pathogen)
-# unique_regions <- unique(IHME$location_name)
-
-# row_index <- 1
-
-# for (pathogen_name in unique_pathogens) {
-#   for (region_name in unique_regions) {
-#     summed_burden <- colSums(optimistic_burden_bootstraps[
-#       IHME$pathogen == pathogen_name &
-#         IHME$location_name == region_name, , drop = FALSE])
-#     optimistic_burden_bootstraps_by_pathogen_and_region[row_index, ] <- summed_burden
-#     row_index <- row_index + 1
-#   }
-# }
-# # for each region and pathogen get the mean and 95% CI of the avertable burden
-# avertable_by_pathogen_and_region <- data.frame(
-#   pathogen = rep(unique_pathogens, each = n_regions),
-#   region = rep(unique_regions, times = n_pathogens),
-#   avertable_burden = numeric(n_regions * n_pathogens),
-#   lower_bound = numeric(n_regions * n_pathogens),
-#   upper_bound = numeric(n_regions * n_pathogens),
-#   avertable_burden_per_100k = numeric(n_regions * n_pathogens),
-#   lower_bound_per_100k = numeric(n_regions * n_pathogens),
-#   upper_bound_per_100k = numeric(n_regions * n_pathogens)
-# )
-# # calculate the mean and 95% CI of the avertable burden for each region and
-# # pathogen
-# for (i in seq_len(nrow(avertable_by_pathogen_and_region))) {
-#   avertable_by_pathogen_and_region$avertable_burden[i] <-
-#     mean(optimistic_burden_bootstraps_by_pathogen_and_region[i, ])
-#   avertable_by_pathogen_and_region$lower_bound[i] <-
-#     quantile(optimistic_burden_bootstraps_by_pathogen_and_region[i, ], 0.025)
-#   avertable_by_pathogen_and_region$upper_bound[i] <-
-#     quantile(optimistic_burden_bootstraps_by_pathogen_and_region[i, ], 0.975)
-  
-#   # Get population for this region
-#   region_name <- avertable_by_pathogen_and_region$region[i]
-#   population <- total_burden_by_region[
-#     total_burden_by_region$region == region_name, "population"]
-  
-#   # Calculate per 100k values
-#   avertable_by_pathogen_and_region$avertable_burden_per_100k[i] <-
-#     avertable_by_pathogen_and_region$avertable_burden[i] / 
-#     (population / 100000)
-#   avertable_by_pathogen_and_region$lower_bound_per_100k[i] <-
-#     avertable_by_pathogen_and_region$lower_bound[i] / 
-#     (population / 100000)
-#   avertable_by_pathogen_and_region$upper_bound_per_100k[i] <-
-#     avertable_by_pathogen_and_region$upper_bound[i] / 
-#     (population / 100000)
-# }
-# write.csv(avertable_by_pathogen_and_region,
-#   "Outputs/10pc_avertable_burden_by_pathogen_and_region_joelike_weighted_upper_region_optimistic_overall.csv",
-#   row.names = FALSE)
-
-# # aggregate optimistic_burden_bootstraps by drug and region, getting mean of and
-# # 95% CI of the avertable burden
-# optimistic_burden_bootstraps_by_drug_and_region <- matrix(0,
-#   nrow = n_regions * n_drugs, ncol = n_bootstraps)
-# unique_drugs <- unique(IHME$antibiotic_class)
-# unique_regions <- unique(IHME$location_name)
-
-# row_index <- 1
-
-# for (drug_name in unique_drugs) {
-#   for (region_name in unique_regions) {
-#     summed_burden <- colSums(optimistic_burden_bootstraps[
-#       IHME$antibiotic_class == drug_name &
-#         IHME$location_name == region_name, , drop = FALSE])
-#     optimistic_burden_bootstraps_by_drug_and_region[row_index, ] <- summed_burden
-#     row_index <- row_index + 1
-#   }
-# }
-# # for each region and pathogen get the mean and 95% CI of the avertable burden
-# # print(unique_drugs)
-# avertable_by_drug_and_region <- data.frame(
-#   drug = rep(unique_drugs, each = n_regions),
-#   region = rep(unique_regions, times = n_drugs),
-#   avertable_burden = numeric(n_regions * n_drugs),
-#   lower_bound = numeric(n_regions * n_drugs),
-#   upper_bound = numeric(n_regions * n_drugs),
-#   avertable_burden_per_100k = numeric(n_regions * n_drugs),
-#   lower_bound_per_100k = numeric(n_regions * n_drugs),
-#   upper_bound_per_100k = numeric(n_regions * n_drugs)
-# )
-# # print(avertable_by_drug_and_region)
-# # calculate the mean and 95% CI of the avertable burden for each region and
-# # drug
-# for (i in seq_len(nrow(avertable_by_drug_and_region))) {
-#   avertable_by_drug_and_region$avertable_burden[i] <-
-#     mean(optimistic_burden_bootstraps_by_drug_and_region[i, ])
-#   avertable_by_drug_and_region$lower_bound[i] <-
-#     quantile(optimistic_burden_bootstraps_by_drug_and_region[i, ], 0.025)
-#   avertable_by_drug_and_region$upper_bound[i] <-
-#     quantile(optimistic_burden_bootstraps_by_drug_and_region[i, ], 0.975)
-  
-#   # Get population for this region
-#   region_name <- avertable_by_drug_and_region$region[i]
-#   population <- total_burden_by_region[
-#     total_burden_by_region$region == region_name, "population"]
-  
-#   # Calculate per 100k values
-#   avertable_by_drug_and_region$avertable_burden_per_100k[i] <-
-#     avertable_by_drug_and_region$avertable_burden[i] / 
-#     (population / 100000)
-#   avertable_by_drug_and_region$lower_bound_per_100k[i] <-
-#     avertable_by_drug_and_region$lower_bound[i] / 
-#     (population / 100000)
-#   avertable_by_drug_and_region$upper_bound_per_100k[i] <-
-#     avertable_by_drug_and_region$upper_bound[i] / 
-#     (population / 100000)
-# }
-# write.csv(avertable_by_drug_and_region,
-#   "Outputs/10pc_avertable_burden_by_drug_and_region_joelike_weighted_upper_region_optimistic_overall.csv",
-#   row.names = FALSE)
-
 ##### Calculate GDP and use by lower IHME region for 2018, to use in meta-regression
 
 gdp_by_country_year <- read.csv("Chungman/Chungman_pca_renamed.csv")
@@ -611,605 +404,332 @@ write.csv(use_by_lower_ihme_region,
     "Outputs/use_by_lower_ihme_region_2018_test.csv",
     row.names = FALSE)
 
-# Load metafor package for meta-regression
-library(metafor)
+# =============================================================================
+# Top-level call: run burden bootstrap computation and Figure 4.
+# Deferred below the function definitions so they are available.
+# These are executed after all function definitions have been parsed.
+# =============================================================================
+# (Executed at end of file via .amr_run_burden_toplevel)
+.amr_run_burden_toplevel <- TRUE
 
-file_path <- paste0("Outputs/10pc_avertable_burden_by_region_joelike_",
-                    "weighted_lower_region_v2.csv")
-avertable_by_region <- read.csv(file_path)
+# =============================================================================
+# compute_avertable_burden(): Rescued from archive/burden_bootstrap_loop_archived.r
+# Runs the per-row gamma bootstrap loop over IHME data, then aggregates by
+# region, pathogen, drug, region x pathogen, and region x drug.
+# Writes canonical output CSVs under Outputs/.
+#
+# Parameters:
+#   IHME               : data frame with gamma params (shape_all, scale_all,
+#                        a_frac, b_frac) and location_name, pathogen,
+#                        antibiotic_class columns
+#   results_bootstrap  : bootstrap gradient samples per pathogen x antibiotic
+#                        (columns: Pathogen, Antibiotic, Gradient)
+#   gradients_bootstrap: bootstrap class-level gradient samples
+#                        (columns: Antibiotic, Consumption)
+#   optimistic_df      : proportionate consumption under optimistic reduction
+#   pessimistic_df     : proportionate consumption under pessimistic reduction
+#   total_burden_by_region : data frame with region, total_burden, population
+#   n_bootstraps       : number of bootstrap iterations (default 1000)
+#   output_tag         : string appended to all canonical output file names
+# =============================================================================
+compute_avertable_burden <- function(
+    IHME,
+    results_bootstrap,
+    gradients_bootstrap,
+    optimistic_df,
+    pessimistic_df,
+    total_burden_by_region,
+    n_bootstraps = 1000,
+    output_tag = "canonical_weighted_lower_region_v2"
+) {
+    set.seed(260116)
+    lower_to_upper <- unique(iso3_ihme_mapping[, c("lower_ihme_region", "ihme_region")])
+    n_rows <- nrow(IHME)
+    optimistic_burden_bootstraps  <- matrix(0, nrow = n_rows, ncol = n_bootstraps)
+    pessimistic_burden_bootstraps <- matrix(0, nrow = n_rows, ncol = n_bootstraps)
 
-gdp_by_lower_ihme_region <- read.csv(
-  "Outputs/gdp_by_lower_ihme_region_2018_test.csv")
-use_by_lower_ihme_region <- read.csv(
-  "Outputs/use_by_lower_ihme_region_2018_test.csv")
+    for (i in seq_len(n_rows)) {
+        if (i %% 5000 == 0) message("[burden] Row ", i, " of ", n_rows)
+        pathogen   <- IHME$pathogen[i]
+        antibiotic <- IHME$antibiotic_class[i]
+        location   <- IHME$location_name[i]
 
-# plot proportion avertable vs gdp per capita
-avertable_by_region <- merge(avertable_by_region,
-                             gdp_by_lower_ihme_region,
-                             by.x = "region",
-                             by.y = "lower_ihme_region")
+        if (is.na(pathogen) || is.na(antibiotic) || is.na(location)) next
+        if (antibiotic == "Other") next
 
-# Order regions by proportion avertable (descending)
-avertable_by_region <- avertable_by_region[
-                       order(avertable_by_region$proportion_avertable, 
-                             decreasing = TRUE), ]
+        shape_all  <- IHME$shape_all[i]
+        scale_all  <- IHME$scale_all[i]
+        a_frac     <- IHME$a_frac[i]
+        b_frac     <- IHME$b_frac[i]
+        value_gamma <- rgamma(n_bootstraps, shape = shape_all, scale = scale_all) * a_frac * b_frac
 
-# Merge with antibiotic use data
-avertable_by_region <- merge(avertable_by_region,
-                             use_by_lower_ihme_region,
-                             by.x = "region",
-                             by.y = "lower_ihme_region")
+        # Sample gradients: pathogen-specific first, fall back to class-level
+        path_boots <- results_bootstrap[
+            results_bootstrap$Pathogen   == pathogen &
+            results_bootstrap$Antibiotic == antibiotic, "Gradient"]
+        if (length(path_boots) >= n_bootstraps) {
+            gradients <- sample(path_boots, n_bootstraps, replace = TRUE)
+        } else {
+            class_boots <- gradients_bootstrap[
+                gradients_bootstrap$Antibiotic == antibiotic, "Gradient"]
+            if (length(class_boots) == 0) next
+            gradients <- sample(class_boots, n_bootstraps, replace = TRUE)
+        }
 
-# Filter out regions with no use data (use_2018 == 0 or NA)
-avertable_by_region_with_use <- avertable_by_region[
-                                !is.na(avertable_by_region$use_2018) &
-                                avertable_by_region$use_2018 > 0, ]
+        # Optimistic burden
+        opt_row <- optimistic_df[
+            optimistic_df$Pathogen == "Overall" &
+            optimistic_df$Location == location &
+            optimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"]
+        if (length(opt_row) == 0 || is.na(opt_row)) {
+          upper_loc <- lower_to_upper$ihme_region[
+            match(location, lower_to_upper$lower_ihme_region)]
+          if (length(upper_loc) > 0 && !is.na(upper_loc)) {
+            opt_row <- optimistic_df[
+              optimistic_df$Pathogen == "Overall" &
+              optimistic_df$Location == upper_loc &
+              optimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"]
+          }
+        }
+        if (length(opt_row) == 0 || is.na(opt_row)) {
+            opt_row <- 0.9  # default: uniform 10% reduction
+        }
+        if (opt_row == 0) {
+            optimistic_burden_bootstraps[i, ] <- value_gamma
+        } else {
+            optimistic_burden_bootstraps[i, ] <- value_gamma * (1 - exp(gradients * log(opt_row)))
+        }
 
-# Meta-regression for totals vs GDP (linear and quadratic)
-meta_totals_gdp_linear <- rma(yi = avertable_by_region$avertable_burden,
-                vi = avertable_by_region$variance,
-                mods = ~ gdp_2018,
-                data = avertable_by_region)
+        # Pessimistic burden
+        pes_row <- pessimistic_df[
+            pessimistic_df$Pathogen == "Overall" &
+            pessimistic_df$Location == location &
+            pessimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"]
+        if (length(pes_row) == 0 || is.na(pes_row)) {
+          upper_loc <- lower_to_upper$ihme_region[
+            match(location, lower_to_upper$lower_ihme_region)]
+          if (length(upper_loc) > 0 && !is.na(upper_loc)) {
+            pes_row <- pessimistic_df[
+              pessimistic_df$Pathogen == "Overall" &
+              pessimistic_df$Location == upper_loc &
+              pessimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"]
+          }
+        }
+        if (length(pes_row) == 0 || is.na(pes_row)) {
+            pes_row <- 0.9
+        }
+        if (pes_row == 0) {
+            pessimistic_burden_bootstraps[i, ] <- value_gamma
+        } else {
+            pessimistic_burden_bootstraps[i, ] <- value_gamma * (1 - exp(gradients * log(pes_row)))
+        }
+    }
 
-meta_totals_gdp <- rma(yi = avertable_by_region$avertable_burden,
-              vi = avertable_by_region$variance,
-              mods = ~ gdp_2018 + I(gdp_2018^2),
-              data = avertable_by_region)
+    # Helper: aggregate bootstrap matrix by a grouping vector
+    aggregate_bootstraps <- function(boots, groups, group_vals, pop_df) {
+        n_groups <- length(group_vals)
+        result <- data.frame(
+            region              = group_vals,
+            avertable_burden    = numeric(n_groups),
+            lower_bound         = numeric(n_groups),
+            upper_bound         = numeric(n_groups),
+            variance            = numeric(n_groups),
+            total_burden        = numeric(n_groups),
+            proportion_avertable              = numeric(n_groups),
+            proportion_avertable_lower_bound  = numeric(n_groups),
+            proportion_avertable_upper_bound  = numeric(n_groups),
+            proportion_avertable_variance     = numeric(n_groups),
+            avertable_burden_per_100k         = numeric(n_groups),
+            lower_bound_per_100k              = numeric(n_groups),
+            upper_bound_per_100k              = numeric(n_groups),
+            variance_per_100k                 = numeric(n_groups),
+            stringsAsFactors = FALSE
+        )
+        for (i in seq_len(n_groups)) {
+            g <- group_vals[i]
+            row_idx <- which(groups == g)
+            if (length(row_idx) == 0) next
+            sums <- colSums(boots[row_idx, , drop = FALSE])
+            pop_row <- pop_df[pop_df$region == g, ]
+            pop <- if (nrow(pop_row) > 0) pop_row$population[1] else NA
+            tb  <- if (nrow(pop_row) > 0) pop_row$total_burden[1] else NA
+            result$avertable_burden[i]   <- mean(sums)
+            result$lower_bound[i]        <- quantile(sums, 0.025)
+            result$upper_bound[i]        <- quantile(sums, 0.975)
+            result$variance[i]           <- var(sums)
+            result$total_burden[i]       <- tb
+            if (!is.na(pop) && pop > 0) {
+                result$avertable_burden_per_100k[i] <- mean(sums)  / (pop / 1e5)
+                result$lower_bound_per_100k[i]      <- quantile(sums, 0.025) / (pop / 1e5)
+                result$upper_bound_per_100k[i]      <- quantile(sums, 0.975) / (pop / 1e5)
+                result$variance_per_100k[i]         <- var(sums)   / ((pop / 1e5)^2)
+            }
+        }
+        result$proportion_avertable              <- result$avertable_burden   / result$total_burden
+        result$proportion_avertable_lower_bound  <- result$lower_bound        / result$total_burden
+        result$proportion_avertable_upper_bound  <- result$upper_bound        / result$total_burden
+        result$proportion_avertable_variance     <- result$variance           / result$total_burden^2
+        result
+    }
 
-# Meta-regression for totals vs use (linear and quadratic)
-meta_totals_use_linear <- rma(yi = avertable_by_region_with_use$avertable_burden,
-                vi = avertable_by_region_with_use$variance,
-                mods = ~ use_2018,
-                data = avertable_by_region_with_use)
+    regions   <- unique(IHME$location_name)
+    pathogens <- unique(IHME$pathogen)
+    drugs     <- unique(IHME$antibiotic_class)
 
-meta_totals_use <- rma(yi = avertable_by_region_with_use$avertable_burden,
-              vi = avertable_by_region_with_use$variance,
-              mods = ~ use_2018 + I(use_2018^2),
-              data = avertable_by_region_with_use)
+    # Aggregate by region
+    avertable_by_region <- aggregate_bootstraps(
+        optimistic_burden_bootstraps, IHME$location_name, regions, total_burden_by_region)
+    write.csv(avertable_by_region,
+        paste0("Outputs/10pc_avertable_burden_by_region_", output_tag, ".csv"),
+        row.names = FALSE)
 
-# Meta-regression for proportions vs GDP (linear and quadratic)
-meta_prop_gdp_linear <- rma(yi = avertable_by_region$proportion_avertable,
-              vi = avertable_by_region$proportion_avertable_variance,
-              mods = ~ gdp_2018,
-              data = avertable_by_region)
+    # Aggregate by pathogen (no population normalisation needed here)
+    avertable_by_pathogen <- do.call(rbind, lapply(pathogens, function(p) {
+        idx  <- which(IHME$pathogen == p)
+        sums <- if (length(idx) > 0) colSums(optimistic_burden_bootstraps[idx, , drop = FALSE]) else rep(0, n_bootstraps)
+        data.frame(pathogen = p,
+                   avertable_burden = mean(sums),
+                   lower_bound      = quantile(sums, 0.025),
+                   upper_bound      = quantile(sums, 0.975),
+                   stringsAsFactors = FALSE)
+    }))
+    write.csv(avertable_by_pathogen,
+        paste0("Outputs/10pc_avertable_burden_by_pathogen_", output_tag, ".csv"),
+        row.names = FALSE)
 
-meta_prop_gdp <- rma(yi = avertable_by_region$proportion_avertable,
-            vi = avertable_by_region$proportion_avertable_variance,
-            mods = ~ gdp_2018 + I(gdp_2018^2),
-            data = avertable_by_region)
+    # Aggregate by region x pathogen
+    pairs_rp <- expand.grid(region = regions, pathogen = pathogens, stringsAsFactors = FALSE)
+    avertable_by_pathogen_and_region <- do.call(rbind, lapply(seq_len(nrow(pairs_rp)), function(k) {
+        r  <- pairs_rp$region[k]
+        p  <- pairs_rp$pathogen[k]
+        idx <- which(IHME$location_name == r & IHME$pathogen == p)
+        sums <- if (length(idx) > 0) colSums(optimistic_burden_bootstraps[idx, , drop = FALSE]) else rep(0, n_bootstraps)
+        pop_row <- total_burden_by_region[total_burden_by_region$region == r, ]
+        pop <- if (nrow(pop_row) > 0) pop_row$population[1] else NA
+        data.frame(region = r, pathogen = p,
+                   avertable_burden = mean(sums),
+                   lower_bound      = quantile(sums, 0.025),
+                   upper_bound      = quantile(sums, 0.975),
+                   avertable_burden_per_100k = if (!is.na(pop) && pop > 0) mean(sums) / (pop / 1e5) else NA,
+                   lower_bound_per_100k      = if (!is.na(pop) && pop > 0) quantile(sums, 0.025) / (pop / 1e5) else NA,
+                   upper_bound_per_100k      = if (!is.na(pop) && pop > 0) quantile(sums, 0.975) / (pop / 1e5) else NA,
+                   stringsAsFactors = FALSE)
+    }))
+    write.csv(avertable_by_pathogen_and_region,
+        paste0("Outputs/10pc_avertable_burden_by_pathogen_and_region_", output_tag, ".csv"),
+        row.names = FALSE)
 
-# Meta-regression for proportions vs use (linear and quadratic)
-meta_prop_use_linear <- rma(yi = avertable_by_region_with_use$proportion_avertable,
-              vi = avertable_by_region_with_use$
-                proportion_avertable_variance,
-              mods = ~ use_2018,
-              data = avertable_by_region_with_use)
+    # Aggregate by region x drug
+    pairs_rd <- expand.grid(region = regions, drug = drugs, stringsAsFactors = FALSE)
+    avertable_by_drug_and_region <- do.call(rbind, lapply(seq_len(nrow(pairs_rd)), function(k) {
+        r   <- pairs_rd$region[k]
+        d   <- pairs_rd$drug[k]
+        idx <- which(IHME$location_name == r & IHME$antibiotic_class == d)
+        sums <- if (length(idx) > 0) colSums(optimistic_burden_bootstraps[idx, , drop = FALSE]) else rep(0, n_bootstraps)
+        pop_row <- total_burden_by_region[total_burden_by_region$region == r, ]
+        pop <- if (nrow(pop_row) > 0) pop_row$population[1] else NA
+        data.frame(region = r, drug = d,
+                   avertable_burden = mean(sums),
+                   lower_bound      = quantile(sums, 0.025),
+                   upper_bound      = quantile(sums, 0.975),
+                   avertable_burden_per_100k = if (!is.na(pop) && pop > 0) mean(sums) / (pop / 1e5) else NA,
+                   lower_bound_per_100k      = if (!is.na(pop) && pop > 0) quantile(sums, 0.025) / (pop / 1e5) else NA,
+                   upper_bound_per_100k      = if (!is.na(pop) && pop > 0) quantile(sums, 0.975) / (pop / 1e5) else NA,
+                   stringsAsFactors = FALSE)
+    }))
+    write.csv(avertable_by_drug_and_region,
+        paste0("Outputs/10pc_avertable_burden_by_drug_and_region_", output_tag, ".csv"),
+        row.names = FALSE)
 
-meta_prop_use <- rma(yi = avertable_by_region_with_use$proportion_avertable,
-            vi = avertable_by_region_with_use$
-              proportion_avertable_variance,
-            mods = ~ use_2018 + I(use_2018^2),
-            data = avertable_by_region_with_use)
-
-# Meta-regression for per 100k vs GDP (linear and quadratic)
-meta_per100k_gdp_linear <- rma(yi = avertable_by_region$avertable_burden_per_100k,
-                  vi = avertable_by_region$variance_per_100k,
-                  mods = ~ gdp_2018,
-                  data = avertable_by_region)
-
-meta_per100k_gdp <- rma(yi = avertable_by_region$avertable_burden_per_100k,
-            vi = avertable_by_region$variance_per_100k,
-            mods = ~ gdp_2018 + I(gdp_2018^2),
-            data = avertable_by_region)
-
-# Meta-regression for per 100k vs use (linear and quadratic)
-meta_per100k_use_linear <- rma(
-  yi = avertable_by_region_with_use$avertable_burden_per_100k,
-  vi = avertable_by_region_with_use$variance_per_100k,
-  mods = ~ use_2018,
-  data = avertable_by_region_with_use)
-
-meta_per100k_use <- rma(
-  yi = avertable_by_region_with_use$avertable_burden_per_100k,
-  vi = avertable_by_region_with_use$variance_per_100k,
-  mods = ~ use_2018 + I(use_2018^2),
-  data = avertable_by_region_with_use)
-
-# Print BIC comparisons
-cat("BIC Comparisons:\n")
-cat("Totals vs GDP - Linear:", meta_totals_gdp_linear$fit.stats["BIC", "ML"], 
-  "vs Quadratic:", meta_totals_gdp$fit.stats["BIC", "ML"], "\n")
-cat("Totals vs Use - Linear:", meta_totals_use_linear$fit.stats["BIC", "ML"], 
-  "vs Quadratic:", meta_totals_use$fit.stats["BIC", "ML"], "\n")
-cat("Proportions vs GDP - Linear:", meta_prop_gdp_linear$fit.stats["BIC", "ML"], 
-  "vs Quadratic:", meta_prop_gdp$fit.stats["BIC", "ML"], "\n")
-cat("Proportions vs Use - Linear:", meta_prop_use_linear$fit.stats["BIC", "ML"], 
-  "vs Quadratic:", meta_prop_use$fit.stats["BIC", "ML"], "\n")
-cat("Per 100k vs GDP - Linear:", meta_per100k_gdp_linear$fit.stats["BIC", "ML"], 
-  "vs Quadratic:", meta_per100k_gdp$fit.stats["BIC", "ML"], "\n")
-cat("Per 100k vs Use - Linear:", meta_per100k_use_linear$fit.stats["BIC", "ML"], 
-  "vs Quadratic:", meta_per100k_use$fit.stats["BIC", "ML"], "\n")
-
-# Create prediction data for smooth curves
-gdp_range <- seq(min(avertable_by_region$gdp_2018),
-          max(avertable_by_region$gdp_2018),
-          length.out = 100)
-use_range <- seq(min(avertable_by_region_with_use$use_2018),
-          max(avertable_by_region_with_use$use_2018),
-          length.out = 100)
-
-# Predictions for totals vs GDP
-pred_totals_gdp <- predict(meta_totals_gdp,
-                newmods = cbind(gdp_range, gdp_range^2))
-pred_df_totals_gdp <- data.frame(
-  gdp = gdp_range,
-  pred = pred_totals_gdp$pred,
-  ci_lower = pred_totals_gdp$ci.lb,
-  ci_upper = pred_totals_gdp$ci.ub
-)
-
-# Predictions for totals vs use
-pred_totals_use <- predict(meta_totals_use,
-                newmods = cbind(use_range, use_range^2))
-pred_df_totals_use <- data.frame(
-  use = use_range,
-  pred = pred_totals_use$pred,
-  ci_lower = pred_totals_use$ci.lb,
-  ci_upper = pred_totals_use$ci.ub
-)
-
-# Predictions for proportions vs GDP
-pred_prop_gdp <- predict(meta_prop_gdp,
-              newmods = cbind(gdp_range, gdp_range^2))
-pred_df_prop_gdp <- data.frame(
-  gdp = gdp_range,
-  pred = pred_prop_gdp$pred,
-  ci_lower = pred_prop_gdp$ci.lb,
-  ci_upper = pred_prop_gdp$ci.ub
-)
-
-# Predictions for proportions vs use
-pred_prop_use <- predict(meta_prop_use,
-              newmods = cbind(use_range, use_range^2))
-pred_df_prop_use <- data.frame(
-  use = use_range,
-  pred = pred_prop_use$pred,
-  ci_lower = pred_prop_use$ci.lb,
-  ci_upper = pred_prop_use$ci.ub
-)
-
-# Predictions for per 100k vs GDP
-pred_per100k_gdp <- predict(meta_per100k_gdp,
-              newmods = cbind(gdp_range, gdp_range^2))
-pred_df_per100k_gdp <- data.frame(
-  gdp = gdp_range,
-  pred = pred_per100k_gdp$pred,
-  ci_lower = pred_per100k_gdp$ci.lb,
-  ci_upper = pred_per100k_gdp$ci.ub
-)
-
-# Predictions for per 100k vs use
-pred_per100k_use <- predict(meta_per100k_use,
-              newmods = cbind(use_range, use_range^2))
-pred_df_per100k_use <- data.frame(
-  use = use_range,
-  pred = pred_per100k_use$pred,
-  ci_lower = pred_per100k_use$ci.lb,
-  ci_upper = pred_per100k_use$ci.ub
-)
-
-# where do the predicted proportion curves peak?
-gdp_seq_fine <- seq(100, 60000, by = 100)
-pred_prop_gdp_fine <- predict(meta_prop_gdp,
-                              newmods = cbind(gdp_seq_fine, gdp_seq_fine^2))
-pred_df_prop_gdp_fine <- data.frame(
-  gdp = gdp_seq_fine,
-  pred = pred_prop_gdp_fine$pred,
-  ci_lower = pred_prop_gdp_fine$ci.lb,
-  ci_upper = pred_prop_gdp_fine$ci.ub
-)
-max_index_gdp <- which.max(pred_df_prop_gdp_fine$pred)
-peak_gdp <- pred_df_prop_gdp_fine$gdp[max_index_gdp]
-peak_proportion <- pred_df_prop_gdp_fine$pred[max_index_gdp]
-print(paste0("Peak proportion avertable at GDP: ", peak_gdp,
-             " with proportion: ", peak_proportion))
-use_seq_fine <- seq(1, 30, by = 0.1)
-pred_prop_use_fine <- predict(meta_prop_use,
-                              newmods = cbind(use_seq_fine, use_seq_fine^2))
-pred_df_prop_use_fine <- data.frame(
-  use = use_seq_fine,
-  pred = pred_prop_use_fine$pred,
-  ci_lower = pred_prop_use_fine$ci.lb,
-  ci_upper = pred_prop_use_fine$ci.ub
-)
-max_index_use <- which.max(pred_df_prop_use_fine$pred)
-peak_use <- pred_df_prop_use_fine$use[max_index_use]
-peak_proportion_use <- pred_df_prop_use_fine$pred[max_index_use]
-print(paste0("Peak proportion avertable at use: ", peak_use,
-             " with proportion: ", peak_proportion_use))
-
-# print population-weighted average of proportion avertable for regions South Asia, North Africa and Middle East, Eastern Europe, and Southern Latin America
-total_burden_by_region <- read.csv("Outputs/total_bacterial_disease_burden_by_lower_ihme_region_v2.csv")
-print(total_burden_by_region)
-selected_regions <- c("Central Europe",
-            "Eastern Europe", "Southern Latin America")
-pops <- numeric(length(selected_regions))
-proportions <- numeric(length(selected_regions))
-lower_bounds <- numeric(length(selected_regions))
-upper_bounds <- numeric(length(selected_regions))
-for (i in seq_along(selected_regions)) {
-  region <- selected_regions[i]
-  pops[i] <- total_burden_by_region[
-  total_burden_by_region$region == region, "population"]
-  proportions[i] <- avertable_by_region[
-  avertable_by_region$region == region, "proportion_avertable"]
-  lower_bounds[i] <- avertable_by_region[
-  avertable_by_region$region == region, 
-  "proportion_avertable_lower_bound"]
-  upper_bounds[i] <- avertable_by_region[
-  avertable_by_region$region == region, 
-  "proportion_avertable_upper_bound"]
+    message("[burden] compute_avertable_burden() complete. Output tag: ", output_tag)
+    invisible(list(
+        by_region             = avertable_by_region,
+        by_pathogen           = avertable_by_pathogen,
+        by_pathogen_and_region = avertable_by_pathogen_and_region,
+        by_drug_and_region    = avertable_by_drug_and_region
+    ))
 }
-weighted_average_proportion <- sum(pops * proportions) / sum(pops)
-weighted_average_lower <- sum(pops * lower_bounds) / sum(pops)
-weighted_average_upper <- sum(pops * upper_bounds) / sum(pops)
-print(paste0("Population-weighted average proportion avertable for ",
-       "selected regions: ", round(weighted_average_proportion, 4), 
-       " (", round(weighted_average_lower, 4), "-", 
-       round(weighted_average_upper, 4), ")"))
-# print the gdp per capita for each of these regions
-for (i in seq_along(selected_regions)) {
-  region <- selected_regions[i]
-  gdp <- avertable_by_region[
-    avertable_by_region$region == region, "gdp_2018"]
-  print(paste0("GDP per capita for ", region, ": ", round(gdp, 2)))
+
+# =============================================================================
+# Deferred top-level execution: compute_avertable_burden()
+# Called after all function definitions above have been parsed.
+# Figure 4 is generated by the figures stage (generate_figure4() in plotting.R).
+# =============================================================================
+if (isTRUE(.amr_run_burden_toplevel)) {
+    .burden_scenario  <- getOption("amr_scenario", "main")
+    .n_boot <- if (isTRUE(getOption("amr_smoke_mode", FALSE))) 10L else 1000L
+
+  # Main scenario: uniform 10% reduction across antibiotic classes.
+  main_uniform_df <- expand.grid(
+    Pathogen = "Overall",
+    Location = unique(IHME$location_name),
+    Antibiotic = unique(IHME$antibiotic_class),
+    stringsAsFactors = FALSE
+  )
+  main_uniform_df$ProportionateConsumption <- 0.9
+
+    if (.burden_scenario %in% c("main", "burden_lower_region")) {
+        compute_avertable_burden(
+            IHME                   = IHME,
+            results_bootstrap      = results_bootstrap,
+            gradients_bootstrap    = gradients_bootstrap,
+      optimistic_df          = main_uniform_df,
+            pessimistic_df         = pessimistic_df,
+            total_burden_by_region = total_burden_by_region,
+            n_bootstraps           = .n_boot,
+            output_tag             = "canonical_weighted_lower_region_v2"
+        )
+        # Optimistic scenario (reduce highest-gradient drugs first) — upper-region IHME
+        compute_avertable_burden(
+            IHME                   = IHME_upper,
+            results_bootstrap      = results_bootstrap,
+            gradients_bootstrap    = gradients_bootstrap,
+            optimistic_df          = optimistic_df,
+            pessimistic_df         = pessimistic_df,
+            total_burden_by_region = total_burden_by_region_upper,
+            n_bootstraps           = .n_boot,
+            output_tag             = "canonical_weighted_upper_region_optimistic_overall"
+        )
+        # Pessimistic scenario (reduce lowest-gradient drugs first) — upper-region IHME
+        compute_avertable_burden(
+            IHME                   = IHME_upper,
+            results_bootstrap      = results_bootstrap,
+            gradients_bootstrap    = gradients_bootstrap,
+            optimistic_df          = pessimistic_df,
+            pessimistic_df         = pessimistic_df,
+            total_burden_by_region = total_burden_by_region_upper,
+            n_bootstraps           = .n_boot,
+            output_tag             = "canonical_weighted_upper_region_pessimistic_overall"
+        )
+    }
+
+    if (.burden_scenario %in% c("burden_upper_region", "burden_optimistic",
+                                "burden_drug_region", "burden_pathogen_region")) {
+        compute_avertable_burden(
+            IHME                   = IHME_upper,
+            results_bootstrap      = results_bootstrap,
+            gradients_bootstrap    = gradients_bootstrap,
+            optimistic_df          = optimistic_df,
+            pessimistic_df         = pessimistic_df,
+            total_burden_by_region = total_burden_by_region_upper,
+            n_bootstraps           = .n_boot,
+            output_tag             = "canonical_weighted_upper_region_optimistic_overall"
+        )
+    }
+
+    if (.burden_scenario == "burden_pessimistic") {
+        compute_avertable_burden(
+            IHME                   = IHME_upper,
+            results_bootstrap      = results_bootstrap,
+            gradients_bootstrap    = gradients_bootstrap,
+            optimistic_df          = pessimistic_df,
+            pessimistic_df         = pessimistic_df,
+            total_burden_by_region = total_burden_by_region_upper,
+            n_bootstraps           = .n_boot,
+            output_tag             = "canonical_weighted_upper_region_pessimistic_overall"
+        )
+    }
+
+    message("[burden] Burden estimation complete. Intermediate CSVs written to Outputs/.")
+    message("[burden] Figure 4 is generated by 'make figures' (generate_figure4() in plotting.R).")
 }
-# Figure 1: Total avertable mortality
-totals_by_region <- ggplot(avertable_by_region,
-              aes(x = avertable_burden, 
-                y = reorder(region, avertable_burden))) +
-  geom_bar(stat = "identity", fill = "grey50") +
-  geom_errorbar(aes(xmin = lower_bound, xmax = upper_bound), width = 0.2) +
-  geom_text(aes(label = paste0(format(round(avertable_burden, 2), nsmall = 2), 
-                 " (", format(round(lower_bound, 2), nsmall = 2), "–", 
-                 format(round(upper_bound, 2), nsmall = 2), ")")),
-        hjust = 0, size = 2.5, family = "Helvetica",
-        x = max(avertable_by_region$upper_bound) + 
-          0.02 * (max(avertable_by_region$upper_bound) - 
-              min(avertable_by_region$lower_bound))) +
-  labs(x = "Avertible AMR mortality (deaths)", y = "Region") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      text = element_text(family = "Helvetica")) +
-  coord_cartesian(clip = "off") +
-  theme(plot.margin = margin(5.5, 100, 5.5, 5.5, "points"))
-
-totals_vs_gdp <- ggplot(avertable_by_region,
-             aes(x = gdp_2018, y = avertable_burden)) +
-  geom_ribbon(data = pred_df_totals_gdp, aes(x = gdp, ymin = ci_lower,
-                         ymax = ci_upper), 
-        inherit.aes = FALSE, alpha = 0.2, fill = "black") +
-  geom_line(data = pred_df_totals_gdp, aes(x = gdp, y = pred),
-        inherit.aes = FALSE, color = "black", linewidth = 0.7, alpha = 0.7) +
-  geom_point(size = 2, color = "black") +
-  geom_errorbar(aes(ymin = lower_bound, ymax = upper_bound), width = 0.2,
-          color = "black") +
-  labs(x = "GDP per capita (USD PPP)", y = "Avertible mortality") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      text = element_text(family = "Helvetica"))
-
-totals_vs_use <- ggplot(avertable_by_region_with_use,
-             aes(x = use_2018, y = avertable_burden)) +
-  geom_ribbon(data = pred_df_totals_use, aes(x = use, ymin = ci_lower,
-                         ymax = ci_upper), 
-        inherit.aes = FALSE, alpha = 0.2, fill = "black") +
-  geom_line(data = pred_df_totals_use, aes(x = use, y = pred),
-        inherit.aes = FALSE, color = "black", linewidth = 0.7, alpha = 0.7) +
-  geom_point(size = 2, color = "black") +
-  geom_errorbar(aes(ymin = lower_bound, ymax = upper_bound), width = 0.2,
-          color = "black") +
-  labs(x = "Antibiotic use (DDD/1000 person-days)",
-     y = "Avertible mortality") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      text = element_text(family = "Helvetica"))
-
-# Figure 2: Proportion avertible (converted to percentages)
-proportions_by_region <- ggplot(avertable_by_region,
-                 aes(x = proportion_avertable * 100,
-                   y = reorder(region, 
-                         proportion_avertable))) +
-  geom_bar(stat = "identity", fill = "grey50") +
-  geom_errorbar(aes(xmin = proportion_avertable_lower_bound * 100,
-            xmax = proportion_avertable_upper_bound * 100), 
-          width = 0.2) +
-  geom_text(aes(label = paste0(format(round(proportion_avertable * 100, 2), 
-                    nsmall = 2), 
-                 "% (", 
-                 format(round(proportion_avertable_lower_bound * 
-                        100, 2), nsmall = 2), 
-                 "-", 
-                 format(round(proportion_avertable_upper_bound * 
-                        100, 2), nsmall = 2), 
-                 "%)")),
-        # hjust = 0, size = 2.5, family = "Helvetica",
-        hjust = 0, size = 5, family = "Helvetica",
-        x = max(avertable_by_region$proportion_avertable_upper_bound * 
-            100) + 
-          0.1 * (max(avertable_by_region$proportion_avertable_upper_bound * 
-               100) - 
-             min(avertable_by_region$proportion_avertable_lower_bound * 
-               100))) +
-  labs(x = "Percentage of bacterial mortality avertible (%)", y = "Region", 
-     tag = "A") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      plot.tag = element_text(size = 12, face = "bold", family = "Helvetica"),
-      text = element_text(family = "Helvetica")) +
-  coord_cartesian(clip = "off") +
-  theme(plot.margin = margin(5.5, 150, 5.5, 5.5, "points"))
-
-proportions_vs_gdp <- ggplot(avertable_by_region,
-              aes(x = gdp_2018, 
-                y = proportion_avertable * 100)) +
-  geom_ribbon(data = pred_df_prop_gdp, aes(x = gdp, ymin = ci_lower * 100,
-                       ymax = ci_upper * 100),
-        inherit.aes = FALSE, alpha = 0.2, fill = "black") +
-  geom_line(data = pred_df_prop_gdp, aes(x = gdp, y = pred * 100),
-        inherit.aes = FALSE, color = "black", linewidth = 0.7, alpha = 0.7) +
-  geom_point(size = 2, color = "black") +
-  geom_errorbar(aes(ymin = proportion_avertable_lower_bound * 100,
-            ymax = proportion_avertable_upper_bound * 100), width = 0.2,
-          color = "black") +
-  labs(x = "GDP per capita (USD PPP)", y = "Percentage avertible (%)", tag = "B") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      plot.tag = element_text(size = 12, face = "bold", family = "Helvetica"),
-      text = element_text(family = "Helvetica"))
-
-proportions_vs_use <- ggplot(avertable_by_region_with_use,
-              aes(x = use_2018, 
-                y = proportion_avertable * 100)) +
-  geom_ribbon(data = pred_df_prop_use, aes(x = use, ymin = ci_lower * 100,
-                       ymax = ci_upper * 100),
-        inherit.aes = FALSE, alpha = 0.2, fill = "black") +
-  geom_line(data = pred_df_prop_use, aes(x = use, y = pred * 100),
-        inherit.aes = FALSE, color = "black", linewidth = 0.7, alpha = 0.7) +
-  geom_point(size = 2, color = "black") +
-  geom_errorbar(aes(ymin = proportion_avertable_lower_bound * 100,
-            ymax = proportion_avertable_upper_bound * 100), width = 0.2,
-          color = "black") +
-  labs(x = "Antibiotic use (DDD/1000 person-days)",
-     y = "Percentage avertible (%)", tag = "C") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      plot.tag = element_text(size = 12, face = "bold", family = "Helvetica"),
-      text = element_text(family = "Helvetica"))
-
-# Figure for per 100k population vs GDP
-per100k_vs_gdp <- ggplot(avertable_by_region,
-            aes(x = gdp_2018, y = avertable_burden_per_100k)) +
-  geom_ribbon(data = pred_df_per100k_gdp, aes(x = gdp, ymin = ci_lower,
-                        ymax = ci_upper), 
-        inherit.aes = FALSE, alpha = 0.2, fill = "black") +
-  geom_line(data = pred_df_per100k_gdp, aes(x = gdp, y = pred),
-        inherit.aes = FALSE, color = "black", linewidth = 0.7, alpha = 0.7) +
-  geom_point(size = 2, color = "black") +
-  geom_errorbar(aes(ymin = lower_bound_per_100k,
-            ymax = upper_bound_per_100k), width = 0.2,
-          color = "black") +
-  labs(x = "GDP per capita (USD PPP)", y = "Avertible per 100k", tag = "D") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      plot.tag = element_text(size = 12, face = "bold", family = "Helvetica"),
-      text = element_text(family = "Helvetica"))
-
-# Figure for per 100k population vs use
-per100k_vs_use <- ggplot(avertable_by_region_with_use,
-            aes(x = use_2018, y = avertable_burden_per_100k)) +
-  geom_ribbon(data = pred_df_per100k_use, aes(x = use, ymin = ci_lower,
-                        ymax = ci_upper), 
-        inherit.aes = FALSE, alpha = 0.2, fill = "black") +
-  geom_line(data = pred_df_per100k_use, aes(x = use, y = pred),
-        inherit.aes = FALSE, color = "black", linewidth = 0.7, alpha = 0.7) +
-  geom_point(size = 2, color = "black") +
-  geom_errorbar(aes(ymin = lower_bound_per_100k,
-            ymax = upper_bound_per_100k), width = 0.2,
-          color = "black") +
-  labs(x = "Antibiotic use (DDD/1000 person-days)",
-     y = "Avertible per 100k", tag = "E") +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-      panel.grid = element_blank(),
-      axis.title.x = element_text(size = 10, family = "Helvetica"),
-      axis.title.y = element_text(size = 10, family = "Helvetica"),
-      axis.text.x = element_text(size = 8, family = "Helvetica"),
-      axis.text.y = element_text(size = 8, family = "Helvetica"),
-      plot.title = element_text(size = 12, family = "Helvetica"),
-      axis.ticks = element_line(color = "black"),
-      plot.tag = element_text(size = 12, face = "bold", family = "Helvetica"),
-      text = element_text(family = "Helvetica"))
-
-# Create Figure 1: Total avertable mortality with top panel spanning width
-figure1 <- gridExtra::grid.arrange(
-  totals_by_region,
-  gridExtra::arrangeGrob(totals_vs_gdp, totals_vs_use, ncol = 2),
-  heights = c(1, 1)
-)
-
-# Create Panel A figure (proportions by region)
-panel_A <- proportions_by_region +
-  labs(tag = "") +  # Remove tag since it will be the only panel
-  theme(axis.title.x = element_text(size = 20),
-        axis.title.y = element_text(size = 20),
-        axis.text.x = element_text(size = 16),
-        axis.text.y = element_text(size = 16),
-        plot.title = element_text(size = 24))
-
-# Create Panels B & C figure (proportions vs GDP and use)
-panels_B_C <- gridExtra::arrangeGrob(
-  proportions_vs_gdp + theme(axis.title.x = element_text(size = 16),
-                            axis.title.y = element_text(size = 16),
-                            axis.text.x = element_text(size = 14),
-                            axis.text.y = element_text(size = 14)),
-  proportions_vs_use + theme(axis.title.x = element_text(size = 16),
-                            axis.title.y = element_text(size = 16),
-                            axis.text.x = element_text(size = 14),
-                            axis.text.y = element_text(size = 14)),
-  ncol = 2, nrow = 1
-)
-
-panels_D_E <- gridExtra::arrangeGrob(
-  per100k_vs_gdp + theme(axis.title.x = element_text(size = 16),
-                        axis.title.y = element_text(size = 16),
-                        axis.text.x = element_text(size = 14),
-                        axis.text.y = element_text(size = 14)),
-  per100k_vs_use + theme(axis.title.x = element_text(size = 16),
-                        axis.title.y = element_text(size = 16),
-                        axis.text.x = element_text(size = 14),
-                        axis.text.y = element_text(size = 14)),
-  ncol = 2, nrow = 1
-)
-
-# Create Panels B-E figure
-panels_B_E <- gridExtra::arrangeGrob(
-  proportions_vs_gdp + theme(axis.title.x = element_text(size = 16),
-                            axis.title.y = element_text(size = 16),
-                            axis.text.x = element_text(size = 14),
-                            axis.text.y = element_text(size = 14)),
-  proportions_vs_use + theme(axis.title.x = element_text(size = 16),
-                            axis.title.y = element_text(size = 16),
-                            axis.text.x = element_text(size = 14),
-                            axis.text.y = element_text(size = 14)),
-  per100k_vs_gdp + theme(axis.title.x = element_text(size = 16),
-                        axis.title.y = element_text(size = 16),
-                        axis.text.x = element_text(size = 14),
-                        axis.text.y = element_text(size = 14)),
-  per100k_vs_use + theme(axis.title.x = element_text(size = 16),
-                        axis.title.y = element_text(size = 16),
-                        axis.text.x = element_text(size = 14),
-                        axis.text.y = element_text(size = 14)),
-  ncol = 2, nrow = 2
-)
-
-# Save Panel A as PowerPoint slide
-ggsave("Figure4_Panel_A_narrow.pdf", panel_A,
-       width = 9, height = 7.5, units = "in")
-
-# Save Panels B & C as PowerPoint slide
-ggsave("Figure4_Panels_B_C_narrow.pdf", panels_B_C,
-       width = 9, height = 7.5, units = "in")
-
-# Save Panels D & E as PowerPoint slide
-ggsave("Figure4_Panels_D_E_narrow.pdf", panels_D_E,
-       width = 9, height = 7.5, units = "in")
-
-# Save Panels B-E as PowerPoint slide
-ggsave("Figure4_Panels_B_E_narrow.pdf", panels_B_E,
-       width = 9, height = 7.5, units = "in")
-    
-
-# Save the plots
-ggsave("Figure4.pdf", figure2,
-     width = 6.5, height = 7, units = "in")
-ggsave("percentage_avertable_mortality_figure.png", figure2,
-     width = 6.5, height = 7, units = "in")
-
-# get the avertable burden per 100,000 population by drug and region
-avertable_by_drug_and_region <- merge(avertable_by_drug_and_region, pop_by_lower_ihme_region, by.x = "region", by.y = "lower_ihme_region")
-avertable_by_drug_and_region$avertable_burden_per_100k <- (avertable_by_drug_and_region$avertable_burden / avertable_by_drug_and_region$population_2018) * 100000
-avertable_by_drug_and_region$lower_bound_per_100k <- (avertable_by_drug_and_region$lower_bound / avertable_by_drug_and_region$population_2018) * 100000
-avertable_by_drug_and_region$upper_bound_per_100k <- (avertable_by_drug_and_region$upper_bound / avertable_by_drug_and_region$population_2018) * 100000
-write.csv(avertable_by_drug_and_region, "Outputs/10pc_avertable_burden_per_100k_by_drug_and_region_joelike_weighted_w_GASP.csv", row.names = FALSE)
-
-# # remove J01X and any other antibiotics that are not in the ATC3 list
-# avertable_by_antibiotic_class <- avertable_by_antibiotic_class[!avertable_by_antibiotic_class$antibiotic_class %in% c("J01X", "Other", "Multi-drug resistance in Salmonella Typhi and Paratyphi"),]
-
-# # sum avertable burden for rows with same "pathogen","antibiotic_class","location_name"
-# avertable <- IHME[c("location_name","pathogen","antibiotic_class","true_val_att","avertable_burden")] %>%
-#     group_by(location_name, pathogen, antibiotic_class) %>%
-#     summarise(attributable_burden = sum(true_val_att, na.rm = TRUE), avertable_burden = sum(avertable_burden, na.rm = TRUE), .groups = 'drop')
-# avertable_by_country <- IHME[c("location_name","pathogen","antibiotic_class","true_val_att","avertable_burden")] %>%
-#     group_by(location_name) %>%
-#     summarise(attributable_burden = sum(true_val_att, na.rm = TRUE), avertable_burden = sum(avertable_burden, na.rm = TRUE), .groups = 'drop')
-# avertable_by_drug <- IHME[c("pathogen","antibiotic_class","true_val_att","avertable_burden")] %>%
-#     group_by(antibiotic_class) %>%
-#     summarise(attributable_burden = sum(true_val_att, na.rm = TRUE), avertable_burden = sum(avertable_burden, na.rm = TRUE), .groups = 'drop')
-# avertable_by_pathogen <- IHME[c("pathogen","antibiotic_class","true_val_att","avertable_burden")] %>%
-#     group_by(pathogen) %>%
-#     summarise(attributable_burden = sum(true_val_att, na.rm = TRUE), avertable_burden = sum(avertable_burden, na.rm = TRUE), .groups = 'drop')
-# horizontal bar chart of deaths avertable by pathogen
-plot <- ggplot(avertable_by_pathogen, aes(x = avertable_burden, y = fct_reorder(pathogen, avertable_burden))) +
-    geom_bar(stat = "identity", fill = "grey50") +
-    geom_errorbar(aes(xmin = lower_bound, xmax = upper_bound), width = 0.2, position = position_dodge(0.9)) +
-    labs(x = "Deaths averted", y = "") +
-    ggtitle("Deaths avertable by a 10% reduction in antibiotic use, by pathogen") +
-    theme_minimal() +
-    theme(panel.background = element_rect(fill = "white")) +
-    theme(panel.grid = element_blank()) +
-    theme(axis.title.x = element_text(size = 20)) +
-    theme(axis.title.y = element_text(size = 20)) +
-    theme(axis.text.x = element_text(size = 14)) +
-    theme(axis.text.y = element_text(size = 14)) +
-    theme(plot.title = element_text(size = 24))  # Set title size
-# save the plot
-ggsave("10pc_avertable_attributable_burden_by_pathogen_joelike_slide.png", plot, width = 13.3, height = 7.5, units = "in")
-
-# # how many rows in IHME have NA avertable_burden
-# print(paste("Proportion of rows with NA avertable_burden:", na_rows / nrow(IHME)))
-# save IHME as csv
-# write.csv(IHME, "IHME_AMR/IHME_AMR_with_10pc_avertable_burden.csv", row.names = FALSE)
-# write.csv(avertable, "IHME_AMR/10pc_avertable_burden.csv", row.names = FALSE)
-# write.csv(avertable_by_country, "IHME_AMR/10pc_avertable_burden_by_country.csv", row.names = FALSE)
-# write.csv(avertable_by_drug, "IHME_AMR/10pc_avertable_burden_by_drug.csv", row.names = FALSE)
-# write.csv(avertable_by_pathogen, "IHME_AMR/10pc_avertable_burden_by_pathogen.csv", row.names = FALSE)
