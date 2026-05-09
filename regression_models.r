@@ -2,6 +2,7 @@
 # ## BJS March 2025
 library(tidyverse)
 library(dplyr)
+library(glmnet)
 source("utils.R")
 source("config.R")
 
@@ -194,8 +195,8 @@ job_or_default <- function(job, key, default_value) {
     default_value
 }
 load_model_inputs <- function(
-    merged_data_path = "merged_data_N_PC3_GDP.csv",
-    merged_sums_path = "merged_data_sums_N.csv",
+    merged_data_path = "merged_data_new.csv",
+    merged_sums_path = "merged_data_sums_new.csv",
     min_entries_per_combo = 10,
     min_isolates_per_combo = 100
 ) {
@@ -277,7 +278,8 @@ load_model_inputs <- function(
     data_HIC <- data[data$lending_group == "High income", ]
 
     data <- data %>%
-        select(Consumption, Resistance, Pathogen, Antibiotic, Weight, ISO3, all_of(country_covariates))
+        select(Consumption, Resistance, Pathogen, Antibiotic, Weight, ISO3, 
+               all_of(country_covariates), ends_with(".Consumption"))
 
     list(data = data, data_HIC = data_HIC, data_LMIC = data_LMIC)
 }
@@ -300,7 +302,8 @@ scale_and_log_transform <- function(df, global_consumption) {
         left_join(global_consumption, by = c("Antibiotic")) %>%
         mutate(Consumption = Consumption / Global.Consumption) %>%
         select(-Global.Consumption)
-    df <- na.omit(df)
+    df <- df %>%
+        filter(!is.na(Consumption) & !is.na(Resistance) & !is.na(Weight))
 
     df$Consumption <- log(df$Consumption + 1)
     df$Resistance <- log(df$Resistance + 1)
@@ -583,21 +586,241 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
     write.csv(bootstraps, build_output_path(bootstrap_prefix, output_tag), row.names = FALSE)
 }
 
-fit_class_random_effects_models <- function(data_, output_tag = "all_lagged", runtime_options = get_runtime_options()) {
+fit_combined_pathogen_drug_glmnet <- function(data_, output_tag = "lagged", runtime_options = get_runtime_options(), output_prefix = "database") {
+    gradients <- c()
+    conf_intervals <- c()
+    pathogens <- c()
+    abs <- c()
+    lambdas <- c()
+    bootstraps <- data.frame()
+    cross_class_effects <- data.frame()
+
+    antibiotics_to_fit <- sort(unique(data_$Antibiotic))
+    pathogens_to_fit <- sort(unique(data_$Pathogen))
+
+    if (isTRUE(runtime_options$smoke_mode)) {
+        antibiotics_to_fit <- head(antibiotics_to_fit, runtime_options$smoke_max_classes)
+        pathogens_to_fit <- head(pathogens_to_fit, runtime_options$smoke_max_pathogens)
+    }
+
+    for (antibiotic in antibiotics_to_fit) {
+        for (pathogen in pathogens_to_fit) {
+            # 1. Subset and clean data
+            data_subset <- data_[data_$Pathogen == pathogen & data_$Antibiotic == antibiotic, ]
+            data_subset <- data_subset %>%
+                select(where(~ !all(is.na(.)))) %>%
+                na.omit()
+            
+            if (nrow(data_subset) < 10) {
+                next
+            }
+
+            # 2. Build Primary Matrix
+            y_vector <- data_subset$Resistance
+            weights_vector <- data_subset$Weight
+            
+            # Drop character metadata completely so model.matrix doesn't see them
+            x_data <- data_subset %>%
+                select(-Pathogen, -Antibiotic, -ISO3, -Weight, -Resistance)
+
+            # Ensure Year is strictly numeric to act as a continuous secular trend
+            if ("Year" %in% colnames(x_data)) {
+                x_data$Year <- as.numeric(as.character(x_data$Year))
+            }
+
+            # Build matrix purely on the numeric predictor columns
+            x_matrix <- model.matrix(~ . - 1, data = x_data)
+
+            # --- NEW: Create Selective Penalty Factor ---
+            # Default all columns to a penalty of 1 (fully penalized)
+            p_fac <- rep(1, ncol(x_matrix))
+            
+            # Find the index of our target "Consumption" column and set its penalty to 0
+            target_idx <- which(colnames(x_matrix) == "Consumption")
+            if (length(target_idx) > 0) {
+                p_fac[target_idx] <- 0 
+            } else {
+                warning("Consumption column not found in x_matrix for ", pathogen, " x ", antibiotic, "; proceeding without unpenalized term.")
+            }
+
+            # 3. Fit Primary CV Model to find optimal Lambda (alpha = 0 for Ridge, alpha = 1 for Lasso)
+            cv_model <- tryCatch({
+                cv.glmnet(x = x_matrix, y = y_vector, weights = weights_vector,
+                alpha = 1, penalty.factor = p_fac)
+            }, error = function(e) NULL)
+
+            if (is.null(cv_model)) {
+                next
+            }
+
+            # Extract point estimate at lambda.min
+best_lambda <- cv_model$lambda.min
+            model_coefs <- as.matrix(coef(cv_model, s = best_lambda))
+            
+            # Extract focal gradient
+            gradient <- if ("Consumption" %in% rownames(model_coefs)) model_coefs["Consumption", 1] else 0 
+
+            # Extract cross-class coefficients that survived the penalty
+            cross_vars <- grep("\\.Consumption$", rownames(model_coefs), value = TRUE)
+            
+            # --- CRITICAL FIX: Force R to keep names even if length == 1 ---
+            cross_coefs <- setNames(as.numeric(model_coefs[cross_vars, 1]), cross_vars)
+            # ---------------------------------------------------------------
+            
+            active_cross_coefs <- cross_coefs[cross_coefs != 0]
+
+            # Define all variables we want the bootstrap to track
+            vars_to_track <- c("Consumption", names(active_cross_coefs))
+            
+            # 5. Bootstrap Loop
+            if (runtime_options$boot_nsim > 0) {
+                n <- nrow(data_subset)
+                
+                # Run resamples using lapply to safely build a matrix
+                boot_list <- lapply(1:runtime_options$boot_nsim, function(i) {
+                    idx <- sample(n, n, replace = TRUE)
+                    
+                    x_boot_data <- data_subset[idx, ] %>%
+                        select(-Pathogen, -Antibiotic, -ISO3, -Weight, -Resistance)
+                    if ("Year" %in% colnames(x_boot_data)) {
+                        x_boot_data$Year <- as.numeric(as.character(x_boot_data$Year))
+                    }
+                    
+                    x_boot <- model.matrix(~ . - 1, data = x_boot_data)
+                    y_boot <- data_subset$Resistance[idx]
+                    w_boot <- data_subset$Weight[idx]
+                    
+                    p_fac_boot <- rep(1, ncol(x_boot))
+                    target_idx_boot <- which(colnames(x_boot) == "Consumption")
+                    if (length(target_idx_boot) > 0) p_fac_boot[target_idx_boot] <- 0 
+                    
+                    b_model <- tryCatch({
+                        glmnet(x = x_boot, y = y_boot, weights = w_boot, 
+                               alpha = 1, lambda = best_lambda, penalty.factor = p_fac_boot)
+                    }, error = function(e) NULL)
+                    
+                    if (is.null(b_model)) return(NA)
+                    
+                    b_coefs <- as.matrix(coef(b_model))
+                    
+                    # Extract the exact tracked variables (returning 0 if Lasso dropped them)
+                    sapply(vars_to_track, function(v) {
+                        if (v %in% rownames(b_coefs)) b_coefs[v, 1] else 0
+                    })
+                })
+                
+                # Remove failed iterations and combine into a matrix
+                valid_boots <- boot_list[!is.na(boot_list)]
+                if (length(valid_boots) > 0) {
+                    boot_matrix <- do.call(cbind, valid_boots)
+                    
+                    cis <- apply(boot_matrix, 1, quantile, probs = c(0.025, 0.975), na.rm = TRUE)
+                    
+                    focal_lower <- cis[1, "Consumption"]
+                    focal_upper <- cis[2, "Consumption"]
+                    cross_lowers <- cis[1, names(active_cross_coefs)]
+                    cross_uppers <- cis[2, names(active_cross_coefs)]
+                    
+                    outdf <- data.frame(Pathogen = pathogen, Antibiotic = antibiotic, Gradient = boot_matrix["Consumption", ])
+                } else {
+                    focal_lower <- NA; focal_upper <- NA
+                    cross_lowers <- rep(NA_real_, length(active_cross_coefs))
+                    cross_uppers <- rep(NA_real_, length(active_cross_coefs))
+                    outdf <- data.frame(Pathogen = pathogen, Antibiotic = antibiotic, Gradient = gradient)
+                }
+            } else {
+                focal_lower <- NA; focal_upper <- NA
+                # Use NA_real_ to strictly ensure numeric columns
+                cross_lowers <- rep(NA_real_, length(active_cross_coefs)) 
+                cross_uppers <- rep(NA_real_, length(active_cross_coefs))
+                outdf <- data.frame(Pathogen = pathogen, Antibiotic = antibiotic, Gradient = gradient)
+            }
+
+            # --- Store Cross-Class CIs alongside the effect ---
+            if (length(active_cross_coefs) > 0) {
+                cross_df <- data.frame(
+                    Pathogen = pathogen,
+                    Target_Antibiotic = antibiotic,
+                    Cross_Class_Antibiotic = names(active_cross_coefs),
+                    Coefficient = as.numeric(active_cross_coefs), # Force numeric
+                    Lower_CI = as.numeric(cross_lowers),
+                    Upper_CI = as.numeric(cross_uppers),
+                    row.names = NULL
+                )
+                cross_class_effects <- rbind(cross_class_effects, cross_df)
+            }
+
+            # 5. Store Results
+            gradients <- c(gradients, gradient)
+            conf_intervals <- c(conf_intervals, focal_lower, focal_upper)
+            pathogens <- c(pathogens, pathogen)
+            abs <- c(abs, antibiotic)
+            lambdas <- c(lambdas, best_lambda)
+            bootstraps <- rbind(bootstraps, outdf)
+        }
+    }
+
+    if (length(gradients) == 0) {
+        warning("No valid glmnet models were fit for output tag: ", output_tag)
+        return(invisible(NULL))
+    }
+
+    # Format the confidence intervals into a matrix
+    conf_intervals <- matrix(conf_intervals, nrow = length(gradients), ncol = 2, byrow = TRUE)
+
+    results <- data.frame(
+        Antibiotic = abs,
+        Pathogen = pathogens,
+        Response = gradients,
+        Lower_CI = conf_intervals[, 1],
+        Upper_CI = conf_intervals[, 2],
+        Optimal_Lambda = lambdas
+    )
+
+    # Output Paths
+    gradient_prefix <- if (identical(output_prefix, "Nagorsen")) {
+        "Nagorsen_gradients_pathogen_ATC3_glmnet"
+    } else {
+        "database_gradients_pathogen_ATC3_glmnet_weighted"
+    }
+    cross_prefix <- if (identical(output_prefix, "Nagorsen")) {
+        "Nagorsen_cross_class_effects_glmnet"
+    } else {
+        "database_cross_class_effects_glmnet_weighted"
+    }
+    bootstrap_prefix <- if (identical(output_prefix, "Nagorsen")) {
+        "Nagorsen_gradients_bootstraps_pathogen_ATC3_glmnet"
+    } else {
+        "database_gradients_bootstraps_pathogen_ATC3_glmnet_weighted"
+    }
+
+    # Write files
+    write.csv(results, build_output_path(gradient_prefix, output_tag), row.names = FALSE)
+    write.csv(bootstraps, build_output_path(bootstrap_prefix, output_tag), row.names = FALSE)
+    # Write cross-class effects if any were found
+    if (nrow(cross_class_effects) > 0) {
+        cross_class_effects$Cross_Class_Antibiotic <- gsub("\\.Consumption$", "", cross_class_effects$Cross_Class_Antibiotic)
+        write.csv(cross_class_effects, build_output_path(cross_prefix, output_tag), row.names = FALSE)
+    }
+}
+
+fit_class_random_effects_models <- function(data_, output_tag = "all_lagged", runtime_options = get_runtime_options(), allow_fallback = FALSE) {
     fit_random_effects_models(
         data_ = data_,
         output_tag = output_tag,
         runtime_options = runtime_options,
-        mode = "class"
+        mode = "class",
+        allow_fallback = allow_fallback
     )
 }
 
-fit_pathogen_random_effects_models <- function(data_, output_tag = "all_lagged", runtime_options = get_runtime_options()) {
+fit_pathogen_random_effects_models <- function(data_, output_tag = "all_lagged", runtime_options = get_runtime_options(), allow_fallback = FALSE) {
     fit_random_effects_models(
         data_ = data_,
         output_tag = output_tag,
         runtime_options = runtime_options,
-        mode = "pathogen"
+        mode = "pathogen",
+        allow_fallback = allow_fallback
     )
 }
 
@@ -606,7 +829,8 @@ fit_random_effects_models <- function(
     output_tag,
     runtime_options = get_runtime_options(),
     mode = c("class", "pathogen"),
-    output_prefix = "database"
+    output_prefix = "database",
+    allow_fallback = FALSE
 ) {
     mode <- match.arg(mode)
     accumulator <- initialize_random_effects_accumulator()
@@ -661,20 +885,35 @@ fit_random_effects_models <- function(
             next
         }
 
-        if (length(unique(subset_data[[random_effect_var]])) > 1) {
+        n_levels <- length(unique(subset_data[[random_effect_var]]))
+
+        # Fit lmer if there are >2 levels. If singular/too few levels, check fallback.
+        if (n_levels > 2) {
             model <- fit_random_lmer(subset_data, random_effect_var = random_effect_var)
             log_info(capture.output(print(model)), verbose = runtime_options$verbose)
 
             if (isSingular(model)) {
-                # Singular models (random-slope variance collapsed to zero) are excluded
-                # because they cannot produce reliable uncertainty estimates. This
-                # affects pathogens with very few antibiotic groups or observations
-                # (e.g. Salmonella spp. with only 2 antibiotic groups, 103 obs).
-                # The original pre-refactor pipeline did not apply this check, so
-                # these pathogens appeared in the original figures with very wide CIs.
-                log_info(paste("Model is singular for", singular_msg, label, "- excluding"), verbose = runtime_options$verbose)
+                if (allow_fallback) {
+                    log_info(paste("Model is singular for", singular_msg, label, "- falling back to weighted lm"), verbose = runtime_options$verbose)
+                    model <- fit_weighted_lm(subset_data)
+                    summary_stats <- extract_lm_consumption_summary(model, runtime_options$boot_nsim)
+                } else {
+                    log_info(paste("Model is singular for", singular_msg, label, "- excluding"), verbose = runtime_options$verbose)
+                    next
+                }
+            } else {
+                summary_stats <- extract_lmer_consumption_summary(model, runtime_options$boot_nsim)
+            }
+        } else {
+            if (allow_fallback) {
+                log_info(paste("Only", n_levels, "levels for", singular_msg, label, "- falling back to weighted lm"), verbose = runtime_options$verbose)
+                model <- fit_weighted_lm(subset_data)
+                summary_stats <- extract_lm_consumption_summary(model, runtime_options$boot_nsim)
+            } else {
+                log_info(paste("Only", n_levels, "levels for", singular_msg, label, "- excluding"), verbose = runtime_options$verbose)
                 next
             }
+        }
             summary_stats <- extract_lmer_consumption_summary(model, runtime_options$boot_nsim)
             outdf <- build_bootstrap_df(label_var, label, summary_stats$bootstrap_values)
             accumulator <- append_random_effects_result(
@@ -686,20 +925,17 @@ fit_random_effects_models <- function(
                 upper_ci = summary_stats$upper_ci,
                 bootstrap_df = outdf
             )
-        } else {
-            model <- fit_weighted_lm(subset_data)
-            summary_stats <- extract_lm_consumption_summary(model, runtime_options$boot_nsim)
-            outdf <- build_bootstrap_df(label_var, label, summary_stats$bootstrap_values)
-            accumulator <- append_random_effects_result(
-                accumulator = accumulator,
-                label = label,
-                gradient = summary_stats$gradient,
-                intercept = summary_stats$intercept,
-                lower_ci = summary_stats$lower_ci,
-                upper_ci = summary_stats$upper_ci,
-                bootstrap_df = outdf
-            )
-        }
+        # Centralized appendage handles both lm and lmer uniformly
+        outdf <- build_bootstrap_df(label_var, label, summary_stats$bootstrap_values)
+        accumulator <- append_random_effects_result(
+            accumulator = accumulator,
+            label = label,
+            gradient = summary_stats$gradient,
+            intercept = summary_stats$intercept,
+            lower_ci = summary_stats$lower_ci,
+            upper_ci = summary_stats$upper_ci,
+            bootstrap_df = outdf
+        )
     }
 
     model_gradients <- setNames(accumulator$gradients, accumulator$labels)
@@ -724,8 +960,8 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "main") {
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_N_PC3_GDP.csv",
-            merged_sums_path = "merged_data_sums_N.csv",
+            merged_data_path = "merged_data_new.csv",
+            merged_sums_path = "merged_data_sums_new.csv",
             class_output_tag = "all",
             pathogen_output_tag = "main",
             random_pathogen_output_tag = "all",
@@ -739,8 +975,8 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "hic") {
         return(list(list(
             income = "HIC",
-            merged_data_path = "merged_data_N_PC3_GDP.csv",
-            merged_sums_path = "merged_data_sums_N.csv",
+            merged_data_path = "merged_data_new.csv",
+            merged_sums_path = "merged_data_sums_new.csv",
             class_output_tag = "HIC",
             pathogen_output_tag = "HIC",
             random_pathogen_output_tag = "HIC",
@@ -754,8 +990,8 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "lmic") {
         return(list(list(
             income = "LMIC",
-            merged_data_path = "merged_data_N_PC3_GDP.csv",
-            merged_sums_path = "merged_data_sums_N.csv",
+            merged_data_path = "merged_data_new.csv",
+            merged_sums_path = "merged_data_sums_new.csv",
             class_output_tag = "LMIC",
             pathogen_output_tag = "LMIC",
             random_pathogen_output_tag = "LMIC",
@@ -770,8 +1006,8 @@ resolve_model_jobs <- function(scenario) {
         return(list(
             list(
                 income = "all",
-                merged_data_path = "merged_data_N_PC3_GDP_IQVIA.csv",
-                merged_sums_path = "merged_data_sums_N_IQVIA.csv",
+                merged_data_path = "merged_data_new_IQVIA.csv",
+                merged_sums_path = "merged_data_sums_new_IQVIA.csv",
                 class_output_tag = "all_IQVIA",
                 pathogen_output_tag = "IQVIA",
                 random_pathogen_output_tag = "all_IQVIA",
@@ -782,8 +1018,8 @@ resolve_model_jobs <- function(scenario) {
             ),
             list(
                 income = "all",
-                merged_data_path = "merged_data_N_PC3_GDP_IQVIAextrapolation.csv",
-                merged_sums_path = "merged_data_sums_N_IQVIAextrapolation.csv",
+                merged_data_path = "merged_data_new_IQVIAextrapolation.csv",
+                merged_sums_path = "merged_data_sums_new_IQVIAextrapolation.csv",
                 class_output_tag = "IQVIAextrapolation_all",
                 pathogen_output_tag = "IQVIAextrapolation",
                 random_pathogen_output_tag = "IQVIAextrapolation_all",
@@ -815,8 +1051,8 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "exploratory_lagged") {
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_N_PC3_GDP.csv",
-            merged_sums_path = "merged_data_sums_N.csv",
+            merged_data_path = "merged_data_new.csv",
+            merged_sums_path = "merged_data_sums_new.csv",
             class_output_tag = "all_lagged",
             pathogen_output_tag = "lagged",
             random_pathogen_output_tag = "all_lagged",
@@ -843,8 +1079,8 @@ resolve_model_jobs <- function(scenario) {
         }
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_N_PC3_GDP.csv",
-            merged_sums_path = "merged_data_sums_N.csv",
+            merged_data_path = "merged_data_new.csv",
+            merged_sums_path = "merged_data_sums_new.csv",
             class_output_tag = NA_character_,            # not used for permutation
             pathogen_output_tag = paste0("permutation", perm_class),
             random_pathogen_output_tag = NA_character_,  # not used for permutation
@@ -918,6 +1154,9 @@ run_class_model_pipeline <- function(job) {
         output_prefix = job$output_prefix
     )
 
+    # Determine fallback based on whether this is an income-stratified job
+    allow_fallback <- job$income != "all"
+
     # Class and random-effects models are not needed for permutation runs.
     if (!identical(job$analysis_intent, "permutation")) {
         fit_random_effects_models(
@@ -925,35 +1164,37 @@ run_class_model_pipeline <- function(job) {
             output_tag = job$class_output_tag,
             runtime_options = runtime_options,
             mode = "class",
-            output_prefix = job$output_prefix
+            output_prefix = job$output_prefix,
+            allow_fallback = allow_fallback
         )
         fit_random_effects_models(
             data_,
             output_tag = job$random_pathogen_output_tag,
             runtime_options = runtime_options,
             mode = "pathogen",
-            output_prefix = job$output_prefix
+            output_prefix = job$output_prefix,
+            allow_fallback = allow_fallback
         )
     }
 }
 require(lme4)
-scenario <- get_amr_scenario()
-jobs <- resolve_model_jobs(scenario)
+# scenario <- get_amr_scenario()
+# jobs <- resolve_model_jobs(scenario)
 
-if (length(jobs) == 0) {
-    message("[ddd-linear-model] No model jobs configured for scenario: ", scenario)
-} else {
-    for (job in jobs) {
-        message(
-            "[ddd-linear-model] Running job with data=", job$merged_data_path,
-            ", income=", job$income,
-            ", analysis_intent=", job$analysis_intent,
-            ", apply_lagged_response=", job$apply_lagged_response,
-            ", class_output_tag=", job$class_output_tag,
-            ", pathogen_output_tag=", job$pathogen_output_tag,
-            ", random_pathogen_output_tag=", job$random_pathogen_output_tag
-        )
-        run_class_model_pipeline(job)
-    }
-}
+# if (length(jobs) == 0) {
+#     message("[ddd-linear-model] No model jobs configured for scenario: ", scenario)
+# } else {
+#     for (job in jobs) {
+#         message(
+#             "[ddd-linear-model] Running job with data=", job$merged_data_path,
+#             ", income=", job$income,
+#             ", analysis_intent=", job$analysis_intent,
+#             ", apply_lagged_response=", job$apply_lagged_response,
+#             ", class_output_tag=", job$class_output_tag,
+#             ", pathogen_output_tag=", job$pathogen_output_tag,
+#             ", random_pathogen_output_tag=", job$random_pathogen_output_tag
+#         )
+#         run_class_model_pipeline(job)
+#     }
+# }
 
