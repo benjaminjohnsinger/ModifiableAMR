@@ -914,17 +914,6 @@ fit_random_effects_models <- function(
                 next
             }
         }
-            summary_stats <- extract_lmer_consumption_summary(model, runtime_options$boot_nsim)
-            outdf <- build_bootstrap_df(label_var, label, summary_stats$bootstrap_values)
-            accumulator <- append_random_effects_result(
-                accumulator = accumulator,
-                label = label,
-                gradient = summary_stats$gradient,
-                intercept = summary_stats$intercept,
-                lower_ci = summary_stats$lower_ci,
-                upper_ci = summary_stats$upper_ci,
-                bootstrap_df = outdf
-            )
         # Centralized appendage handles both lm and lmer uniformly
         outdf <- build_bootstrap_df(label_var, label, summary_stats$bootstrap_values)
         accumulator <- append_random_effects_result(
@@ -1178,23 +1167,23 @@ run_class_model_pipeline <- function(job) {
     }
 }
 require(lme4)
-# scenario <- get_amr_scenario()
-# jobs <- resolve_model_jobs(scenario)
+scenario <- get_amr_scenario()
+jobs <- resolve_model_jobs(scenario)
 
-# if (length(jobs) == 0) {
-#     message("[ddd-linear-model] No model jobs configured for scenario: ", scenario)
-# } else {
-#     for (job in jobs) {
-#         message(
-#             "[ddd-linear-model] Running job with data=", job$merged_data_path,
-#             ", income=", job$income,
-#             ", analysis_intent=", job$analysis_intent,
-#             ", apply_lagged_response=", job$apply_lagged_response,
-#             ", class_output_tag=", job$class_output_tag,
-#             ", pathogen_output_tag=", job$pathogen_output_tag,
-#             ", random_pathogen_output_tag=", job$random_pathogen_output_tag
-#         )
-#         run_class_model_pipeline(job)
-#     }
-# }
+if (length(jobs) == 0) {
+    message("[ddd-linear-model] No model jobs configured for scenario: ", scenario)
+} else {
+    for (job in jobs) {
+        message(
+            "[ddd-linear-model] Running job with data=", job$merged_data_path,
+            ", income=", job$income,
+            ", analysis_intent=", job$analysis_intent,
+            ", apply_lagged_response=", job$apply_lagged_response,
+            ", class_output_tag=", job$class_output_tag,
+            ", pathogen_output_tag=", job$pathogen_output_tag,
+            ", random_pathogen_output_tag=", job$random_pathogen_output_tag
+        )
+        run_class_model_pipeline(job)
+    }
+}
 
