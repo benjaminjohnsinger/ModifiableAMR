@@ -2,6 +2,7 @@
 ## Code to merge datasets on AMR
 
 library(dplyr)
+library(tidyr)
 source("utils.R")
 
 prepare_nagorsen_hospital_regression_data <- function(
@@ -94,11 +95,11 @@ prepare_main_regression_data <- function(
     atlas2_path = "ATLAS_more/ATLAS_more_renamed.csv",
     atlase_path = "ATLAS_Enterococcus/ATLAS_Enterococcus_renamed.csv",
     gasp_path = "GASP_N_renamed.csv",
-    consumption_path = "DDD_country_year_class.csv",
+    consumption_path = "antibiotic_consumption_by_ATC3.csv",
     pca_path = "Chungman/Chungman_pca_renamed.csv",
-    no_covariates_path = "merged_data_N_no_covariates_IQVIA.csv",
-    output_path = "merged_data_N_PC3_GDP_IQVIA.csv",
-    sums_output_path = "merged_data_sums_N_IQVIA.csv",
+    no_covariates_path = "merged_data_new_no_covariates.csv",
+    output_path = "merged_data_new.csv",
+    sums_output_path = "merged_data_sums_new.csv",
     year_cutoff = 2018
 ) {
   ## Merge Joe's data with ATLAS and GASP data
@@ -132,27 +133,48 @@ prepare_main_regression_data <- function(
   # Remove HKG
   merged_data <- merged_data[merged_data$ISO3 != "HKG", ]
 
-  # Load IQVIA consumption data
+  # Load GRAM consumption data
   consumption <- read.csv(consumption_path)
-  # map antibiotic classes to ATC.Class
-  consumption$Antibiotic <- sapply(consumption$Antimicrobial, get_atc_class)
-  consumption <- consumption[!consumption$Antibiotic %in% c("J01X", "Other"), ]
+  # Extract the first 4 characters of ATC.level.3.class to get the ATC class
+  consumption$ATC.level.3.class <- substr(consumption$ATC.level.3.class, 1, 4)
+  # rename columns ("Location","Year","ATC level 3 class","Antibiotic consumption (DDD/1,000/day)") in consumption data and map country names onto ISO3
   consumption <- consumption %>%
-    rename(
-      Consumption = DDD
-    ) %>%
-    select(ISO3, Year, Antibiotic, Consumption)
+    rename(ISO3 = Location, Year = Year, Antibiotic = ATC.level.3.class, Consumption = Antibiotic.consumption..DDD.1.000.day.) %>%
+    mutate(ISO3 = iso3_ihme_mapping$iso3[match(ISO3, iso3_ihme_mapping$country_name)])
 
-  # Vectorized join for consumption data using match()
-  # Create composite key: ISO3|Year|ATC.Class
-  merged_data$key <- paste(merged_data$ISO3, merged_data$Year, merged_data$ATC.Class, sep = "|")
-  consumption$key <- paste(consumption$ISO3, consumption$Year, consumption$Antibiotic, sep = "|")
+  consumption <- consumption %>%
+    group_by(ISO3, Year, Antibiotic) %>%
+    summarise(Consumption = sum(Consumption, na.rm = TRUE),
+              .groups = "drop")
 
-  idx <- match(merged_data$key, consumption$key)
-  merged_data$Antibiotic.Consumption <- consumption$Consumption[idx]
-  merged_data$key <- NULL  # Clean up temporary key
-  consumption$key <- NULL
+  # Safely merge the aggregated data
+  consumption$Year <- as.character(consumption$Year)
+  merged_data <- merged_data %>%
+    left_join(consumption,
+              by = c("ISO3" = "ISO3", "Year" = "Year",
+                     "ATC.Class" = "Antibiotic")) %>%
+    rename(Antibiotic.Consumption = Consumption)
 
+  # 3. Create a wide format of consumption for ALL ATC classes
+  wide_consumption <- consumption %>%
+    pivot_wider(
+      names_from = Antibiotic,
+      values_from = Consumption,
+      names_glue = "{Antibiotic}.Consumption"
+    )
+
+  # 4. Join the wide data and replace the redundant ATC class values with NA
+  merged_data <- merged_data %>%
+    left_join(wide_consumption, by = c("ISO3", "Year")) %>%
+    mutate(
+      across(
+        # Target only the newly created *.Consumption columns (ignoring the primary one)
+        ends_with(".Consumption") & !matches("^Antibiotic\\.Consumption$"),
+        # If the column name matches the row's ATC.Class, replace with NA; otherwise, keep the value
+        ~ ifelse(paste0(ATC.Class, ".Consumption") == cur_column(), NA_real_, .x)
+      )
+    )
+  
   write.csv(merged_data, no_covariates_path, row.names = FALSE)
 
   # Load PCA covariates and merge using vectorized join
