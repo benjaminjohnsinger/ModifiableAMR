@@ -302,6 +302,7 @@ scale_and_log_transform <- function(df, global_consumption) {
         left_join(global_consumption, by = c("Antibiotic")) %>%
         mutate(Consumption = Consumption / Global.Consumption) %>%
         select(-Global.Consumption)
+
     df <- df %>%
         filter(!is.na(Consumption) & !is.na(Resistance) & !is.na(Weight))
 
@@ -483,7 +484,8 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
     for (antibiotic in antibiotics_to_fit) {
         for (pathogen in pathogens_to_fit) {
             data_subset <- data_[data_$Pathogen == pathogen & data_$Antibiotic == antibiotic, ]
-            data_subset <- data_subset[complete.cases(data_subset), ]
+            vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "GDP", "Year", "Weight")
+            data_subset <- data_subset[complete.cases(data_subset[, vars_needed]), ]
             data_subset <- data_subset[!is.infinite(data_subset$Consumption), ]
             data_subset <- data_subset[!is.infinite(data_subset$Resistance), ]
             if (nrow(data_subset) <= 1) {
