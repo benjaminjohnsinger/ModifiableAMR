@@ -99,6 +99,15 @@ for (pathogen_name in pathogens) {
     current_order <- current_order + 1
   }
   
+  # --- 1. Define Fixed Display Bounds ---
+  view_min <- -2
+  view_max <- 2
+  
+  # Calculate text positions with a fixed offset from the display bounds
+  # Adjust the '2.0' padding if your pathogen names or estimates are very long
+  text_left_x <- view_min - 2.0 
+  text_right_x <- view_max + 2.0
+
   # Combine layout components and arrange
   plot_df <- rbindlist(plot_data_list, fill = TRUE) %>%
     arrange(Order)
@@ -111,19 +120,11 @@ for (pathogen_name in pathogens) {
       ymax_rect = Order + 0.5
     )
   
-  # --- 4. Plot Layout and Render ---
+# --- 2. Update Plotting Layers ---
   p <- ggplot() +
-    # Shading bands
-    geom_rect(
-      data = shading_df,
-      aes(xmin = -Inf, xmax = Inf, ymin = ymin_rect, ymax = ymax_rect),
-      fill = "grey95"
-    ) +
+    # [Keep geom_rect and geom_vline as they are]
     
-    # Vertical zero reference line
-    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
-    
-    # Point ranges (Estimates + CIs)
+    # Restrict the error bars: values outside -2 to 2 will be clipped at the plot edge
     geom_pointrange(
       data = plot_df %>% filter(Type == "CrossClass"),
       aes(x = Coefficient, y = Order, xmin = Lower_CI, xmax = Upper_CI),
@@ -148,6 +149,18 @@ for (pathogen_name in pathogens) {
       aes(x = text_right_x, y = Order, label = Response_fmt),
       hjust = 1, size = 8 / .pt
     ) +
+    
+    # --- 3. Update the X-Axis Scale ---
+    # We set the scale limits to include the text, but set 'breaks' only for the -2 to 2 range
+    scale_x_continuous(
+      "Coefficient",
+      limits = c(text_left_x, text_right_x),
+      breaks = seq(-2, 2, by = 0.5)
+    ) +
+    
+    # Use coord_cartesian to prevent long error bars from expanding the plot beyond our text
+    # clip = "on" will truncate any error bars that extend past text_left/right
+    coord_cartesian(xlim = c(text_left_x, text_right_x), clip = "on") +
     
     # Theming / Layout Configuration
     scale_x_continuous(
