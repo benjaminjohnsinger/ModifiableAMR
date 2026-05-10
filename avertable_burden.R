@@ -9,14 +9,10 @@ load_and_process_ihme_data <- function(
     ihme_pathogen_path = "IHME_AMR/IHME_AMR_PATHOGEN_2019_DATA_COUNTED_AB.CSV",
     pop_path = "population_by_country_and_year.csv",
     consumption_path = "antibiotic_consumption_by_ATC3.csv",
-    results_path = getOption("amr_burden_results_path",
-        "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted.csv"),
-    results_bootstrap_path = getOption("amr_burden_results_bootstrap_path",
-        "Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_canonical_weighted.csv"),
-    gradients_path = getOption("amr_burden_gradients_path",
-        "Outputs/database_gradients_ATC3_PCA_canonical_weighted.csv"),
-    gradients_bootstrap_path = getOption("amr_burden_gradients_bootstrap_path",
-        "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted.csv")
+    results_path =  "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_main.csv",
+    results_bootstrap_path = "Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_canonical_weighted_main.csv",
+    gradients_path = "Outputs/database_gradients_ATC3_PCA_canonical_weighted_all.csv",
+    gradients_bootstrap_path = "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_all.csv"
 ) {
   ## Load the results from the linear regression
   results <- read.csv(results_path)
