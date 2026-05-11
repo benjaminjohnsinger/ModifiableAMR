@@ -193,8 +193,8 @@ make all-scenarios
 
 | Track | Bottleneck | Approximate time |
 |-------|-----------|-----------------|
-| Main paper (`make manuscript`) | Model fitting: 1,000 bootstrap iterations per pathogen-antibiotic pair | 1-2 hours |
-| Supplementary (`make supplementary`) | Permutation models: 7 classes × full model runtime | 7–20 hours additional |
+| Main paper (`make manuscript`) | Model fitting: 1,000 bootstrap iterations per pathogen-antibiotic pair | 10 min - 1 hour |
+| Supplementary (`make supplementary`) | Model fitting for HIC, LMIC, and hospital data | 10 min - 1 hour |
 
 Use `make models-smoke` (reduced iterations) for rapid pipeline validation only. The full `make supplementary` target is designed to run overnight or on a compute cluster.
 
