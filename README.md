@@ -6,13 +6,7 @@ This repository contains the analysis code for the paper:
 
 ## Overview
 
-Human antibiotic use contributes to the evolution and maintenance of antimicrobial resistance (AMR). This analysis quantifies how much AMR-attributable mortality could be prevented by reducing antibiotic consumption, using global surveillance data on resistance prevalence across 17 bacterial pathogens and 7 antibiotic classes.
-
-Key findings:
-- A 10% reduction in antibiotic use across classes could prevent approximately 67,000 (95% CI: 65,000–69,000) annual deaths attributable to AMR globally.
-- This represents approximately 0.87% of total estimated bacterial disease mortality.
-- In Sub-Saharan Africa, where bacterial disease mortality is highest, the avertible AMR burden is only 0.66% of bacterial disease mortality.
-- The strongest evidence for use-resistance relationships is in quinolones, aminoglycosides, penicillins, and other beta-lactam antibiotics.
+Human antibiotic use contributes to the evolution and maintenance of antimicrobial resistance (AMR). This analysis estimates this relationship, and thererfore the amount of AMR-attributable mortality that could be prevented by reducing antibiotic consumption, using global surveillance data on resistance prevalence across 17 bacterial pathogens and 7 antibiotic classes.
 
 ## Repository structure
 
@@ -49,23 +43,20 @@ archive/                          # Superseded and exploratory scripts (not part
 
 ## Required data
 
-Place the following files at the listed paths before running the pipeline.
+The following data files are mentioned in the code. Their paths may need to be edited depending on how the user stores the downloaded data from the sources given in the manuscript.
 
 | File | Description |
 |------|-------------|
-| `pathogen_abx_analysis_all_variables_(class-specific).csv` | Primary resistance surveillance dataset |
+| `pathogen_abx_analysis_all_variables_(class-specific).csv` | Combined resistance data from WHO GLASS, CAESAR, and ECDC AMR Surveillance atlas |
 | `ATLAS_data/ATLAS_data_renamed.csv` | Pfizer ATLAS resistance data |
 | `ATLAS_more/ATLAS_more_renamed.csv` | Additional ATLAS extracts |
 | `ATLAS_Enterococcus/ATLAS_Enterococcus_renamed.csv` | ATLAS Enterococcus extracts |
 | `GASP_N_renamed.csv` | GASP gonococcal surveillance data |
-| `DDD_country_year_class.csv` | Antibiotic consumption by country, year, and class (DDDs) |
-| `antibiotic_consumption_by_ATC3.csv` | Class-level consumption aggregates |
+| `antibiotic_consumption_by_ATC3.csv` | Antibiotic consumption by ATC3 class by country and year |
 | `Chungman/Chungman_pca_renamed.csv` | GDP and PCA covariate data |
 | `IHME_AMR/IHME_AMR_fitted_gammas_v2.csv` | IHME AMR attributable mortality estimates |
 | `IHME_AMR/IHME_AMR_PATHOGEN_2019_DATA_COUNTED_AB.CSV` | IHME pathogen-level 2019 burden data |
 | `population_by_country_and_year.csv` | Population estimates by country and year |
-
-Data sources and SHA-256 checksums are recorded in `manifests/data_manifest.csv`. Run `make validate-inputs` to verify all required files are present and checksums match.
 
 ## Installation
 
@@ -128,7 +119,6 @@ Individual supplementary targets:
 make models-hic              # HIC-stratified models (Supplementary Figure 1)
 make models-lmic             # LMIC-stratified models (Supplementary Figure 1)
 make models-nagorsen         # Within-hospital analysis (Supplementary Figure 4)
-make models-iqvia            # Raw IQVIA consumption data (Supplementary Figure 3)
 make burden-region-drug      # Burden by region × antibiotic class
 make burden-region-pathogen  # Burden by region × pathogen
 make permutation-models      # Permuted bootstrap models, all 7 classes (~7× model runtime)
@@ -163,7 +153,6 @@ The pipeline supports multiple named scenarios. The main manuscript uses `main`.
 | `main` | Main manuscript analysis |
 | `hic` | High-income country stratified analysis (Supplementary Figure 1) |
 | `lmic` | Low- and middle-income country stratified analysis (Supplementary Figure 1) |
-| `raw_iqvia` | Using raw IQVIA MIDAS consumption data (Supplementary Figure 3) |
 | `hospital_nagorsen` | Within-hospital resistance and consumption (Supplementary Figure 4) |
 | `burden_optimistic` | Burden under optimistic consumption-reduction assumptions |
 | `burden_pessimistic` | Burden under pessimistic consumption-reduction assumptions |
@@ -204,8 +193,8 @@ make all-scenarios
 
 | Track | Bottleneck | Approximate time |
 |-------|-----------|-----------------|
-| Main paper (`make manuscript`) | Model fitting: 1,000 bootstrap iterations per pathogen-antibiotic pair | 2–4 hours |
-| Supplementary (`make supplementary`) | Permutation models: 7 classes × full model runtime | 14–28 hours additional |
+| Main paper (`make manuscript`) | Model fitting: 1,000 bootstrap iterations per pathogen-antibiotic pair | 1-2 hours |
+| Supplementary (`make supplementary`) | Permutation models: 7 classes × full model runtime | 7–20 hours additional |
 
 Use `make models-smoke` (reduced iterations) for rapid pipeline validation only. The full `make supplementary` target is designed to run overnight or on a compute cluster.
 
@@ -222,8 +211,4 @@ make promote-metrics SCENARIO=main
 ```
 
 This reads each pending metric row, computes the observed value from the current output file, and promotes rows that are within tolerance to `canonical`. Rows with mismatches are left as pending and reported for manual review. Repeat for supplementary scenarios after running `make supplementary`.
-
-## Archive
-
-The `archive/` directory contains superseded and exploratory scripts retained for reference. These files are not called by any Makefile target and are not part of the canonical analysis.
 
