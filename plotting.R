@@ -1,3 +1,4 @@
+slide_version = FALSE
 # -----------------------------------------------------------------------------
 # Figure 1 (Advanced ggplot2 Version - FINAL Corrected & Refined)
 # - Uses user's file names and data loading logic
@@ -943,8 +944,8 @@ cat("Standard deviation of pathogen Response values:",
 tryCatch({
   # This file path was already correct
   bootstrap_data_fig2 <- fread("Outputs/database_gradients_bootstraps_pathogen_PCA_canonical_weighted_all.csv") %>%
-    mutate(Pathogen_Display = pathogen_map_fig2[Pathogen]) %>% 
-    filter(Pathogen %in% fig2_pathogen_codes) %>% 
+    mutate(Pathogen_Display = Pathogen) %>% 
+    filter(Pathogen %in% fig2_pathogen_names) %>% 
     mutate(Pathogen_Display = factor(Pathogen_Display, 
                                     levels = rev(fig2_pathogen_names)))
   
@@ -1858,6 +1859,117 @@ for (scen in scenarios) {
 
 cat("All dynamic PowerPoint slide versions for Figure 3 generated successfully.\n")
 } # end if (!.fig3_missing)
+
+# -----------------------------------------------------------------------------
+# Supplementary Figure 5 - Avertable burden by drug and region
+# -----------------------------------------------------------------------------
+cat("Generating Supplementary Figure 5...\n")
+
+# Load data with updated canonical output tag
+avertable_by_drug_region <- read.csv("Outputs/10pc_avertable_burden_by_drug_and_region_canonical_weighted_lower_region_v2.csv", stringsAsFactors = FALSE)
+
+# Apply formatting using the helper function defined earlier
+avertable_by_drug_region <- format_burden(avertable_by_drug_region)
+
+# Sort drugs based on total avertable burden overall to ensure consistent ordering across facets
+drug_order <- avertable_by_drug_region %>% 
+  group_by(drug) %>% 
+  summarise(total_burden = sum(avertable_burden, na.rm = TRUE)) %>% 
+  arrange(total_burden) %>% 
+  pull(drug)
+
+avertable_by_drug_region$drug <- factor(avertable_by_drug_region$drug, levels = drug_order)
+
+# Calculate text position for uniform formatting
+max_x_s5 <- max(avertable_by_drug_region$upper_bound, na.rm = TRUE)
+avertable_by_drug_region$text_pos_x <- max_x_s5 + 0.05 * (max_x_s5 - min(avertable_by_drug_region$lower_bound, na.rm = TRUE))
+
+plot_s5 <- ggplot(avertable_by_drug_region, aes(x = avertable_burden, y = drug)) +
+  geom_bar(stat = "identity", fill = "grey50", color = "black", width = 0.7) +
+  geom_errorbar(aes(xmin = lower_bound, xmax = upper_bound), width = 0.25, color = "black") +
+  geom_text(aes(x = text_pos_x, label = burden_fmt), hjust = 0, size = 8 / .pt, family = "Helvetica") +
+  scale_x_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+  facet_wrap(~ region, ncol = 1, scales = "free_x") +
+  labs(x = "Deaths averted", y = "") +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    axis.title.x = element_text(size = 10, family = "Helvetica"),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(size = 10, family = "Helvetica"),
+    axis.text.y = element_text(size = 10, family = "Helvetica"),
+    axis.line.x = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length.x = unit(4, "points"),
+    axis.ticks.y = element_blank(),
+    strip.text = element_text(size = 10, family = "Helvetica", face = "bold", hjust = 0),
+    strip.background = element_blank(),
+    panel.spacing = unit(0.5, "lines"),
+    legend.position = "none",
+    plot.margin = margin(10, 130, 10, 10, "points") # Make space for text labels
+  ) +
+  coord_cartesian(clip = "off")
+
+ggsave("Supplementary_Figure_5.pdf", plot_s5, width = 8, height = 10, units = "in")
+
+
+# -----------------------------------------------------------------------------
+# Supplementary Figure 6 - Avertable burden by pathogen and region
+# -----------------------------------------------------------------------------
+cat("Generating Supplementary Figure 6...\n")
+
+# Load data with updated canonical output tag
+avertable_by_pathogen_region <- read.csv("Outputs/10pc_avertable_burden_by_pathogen_and_region_canonical_weighted_lower_region_v2.csv", stringsAsFactors = FALSE)
+
+# Apply formatting using the helper function
+avertable_by_pathogen_region <- format_burden(avertable_by_pathogen_region)
+
+# Sort pathogens strictly based on their overall avertable burden sum
+pathogen_order <- avertable_by_pathogen_region %>% 
+  group_by(pathogen) %>% 
+  summarise(total_burden = sum(avertable_burden, na.rm = TRUE)) %>% 
+  arrange(total_burden) %>% 
+  pull(pathogen)
+
+avertable_by_pathogen_region$pathogen <- factor(avertable_by_pathogen_region$pathogen, levels = pathogen_order)
+
+# Calculate uniform text X-coordinate
+max_x_s6 <- max(avertable_by_pathogen_region$upper_bound, na.rm = TRUE)
+avertable_by_pathogen_region$text_pos_x <- max_x_s6 + 0.05 * (max_x_s6 - min(avertable_by_pathogen_region$lower_bound, na.rm = TRUE))
+
+plot_s6 <- ggplot(avertable_by_pathogen_region, aes(x = avertable_burden, y = pathogen)) +
+  geom_bar(stat = "identity", fill = "grey50", color = "black", width = 0.7) +
+  geom_errorbar(aes(xmin = lower_bound, xmax = upper_bound), width = 0.25, color = "black") +
+  geom_text(aes(x = text_pos_x, label = burden_fmt), hjust = 0, size = 8 / .pt, family = "Helvetica") +
+  scale_x_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+  facet_wrap(~ region, ncol = 1, scales = "free_x") +
+  labs(x = "Deaths averted", y = "") +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    axis.title.x = element_text(size = 10, family = "Helvetica"),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(size = 10, family = "Helvetica"),
+    
+    # Italicize pathogen names
+    axis.text.y = element_text(size = 10, family = "Helvetica", face = "italic"), 
+    axis.line.x = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length.x = unit(4, "points"),
+    axis.ticks.y = element_blank(),
+    
+    # Bold region names
+    strip.text = element_text(size = 10, family = "Helvetica", face = "bold", hjust = 0),
+    strip.background = element_blank(),
+    panel.spacing = unit(0.5, "lines"),
+    legend.position = "none",
+    plot.margin = margin(10, 130, 10, 10, "points") # Make space for text labels on the right
+  ) +
+  coord_cartesian(clip = "off")
+
+ggsave("Supplementary_Figure_6.pdf", plot_s6, width = 8, height = 12, units = "in")
 
 # =============================================================================
 # Figure 4 - Proportion of avertable burden by region, GDP, and antibiotic use
