@@ -1861,39 +1861,56 @@ cat("All dynamic PowerPoint slide versions for Figure 3 generated successfully.\
 } # end if (!.fig3_missing)
 
 # -----------------------------------------------------------------------------
-# Supplementary Figure 5 - Avertable burden by drug and region
+# Supplementary Figure 5 - Avertable burden by drug and region (per 100k)
 # -----------------------------------------------------------------------------
 cat("Generating Supplementary Figure 5...\n")
 
-# Load data with updated canonical output tag
-avertable_by_drug_region <- read.csv("Outputs/10pc_avertable_burden_by_drug_and_region_canonical_weighted_lower_region_v2.csv", stringsAsFactors = FALSE)
+# Load data
+avertable_by_drug_region <- read.csv("Outputs/10pc_avertable_burden_by_drug_and_region_canonical_weighted_upper_region_main_overall.csv", stringsAsFactors = FALSE)
 
-# Apply formatting using the helper function defined earlier
-avertable_by_drug_region <- format_burden(avertable_by_drug_region)
+# Filter out unwanted drug categories
+avertable_by_drug_region <- avertable_by_drug_region %>%
+  filter(!drug %in% c("Other", "J01X", "Multi-drug resistance in Salmonella Typhi and Paratyphi"))
 
-# Sort drugs based on total avertable burden overall to ensure consistent ordering across facets
+# Helper function tailored for smaller rate numbers (preserves 2 decimal places)
+format_burden_rate <- function(df) {
+  df$burden_fmt <- paste0(
+    formatC(df$avertable_burden_per_100k, format = "f", big.mark = ",", digits = 2), 
+    " (", 
+    formatC(df$lower_bound_per_100k, format = "f", big.mark = ",", digits = 2), 
+    " to ", 
+    formatC(df$upper_bound_per_100k, format = "f", big.mark = ",", digits = 2), 
+    ")"
+  )
+  return(df)
+}
+
+# Apply formatting for rates
+avertable_by_drug_region <- format_burden_rate(avertable_by_drug_region)
+
+# Sort drugs based on total avertable rate overall to ensure consistent ordering across facets
 drug_order <- avertable_by_drug_region %>% 
   group_by(drug) %>% 
-  summarise(total_burden = sum(avertable_burden, na.rm = TRUE)) %>% 
+  summarise(total_burden = sum(avertable_burden_per_100k, na.rm = TRUE)) %>% 
   arrange(total_burden) %>% 
   pull(drug)
 
 avertable_by_drug_region$drug <- factor(avertable_by_drug_region$drug, levels = drug_order)
 
-# Calculate text position for uniform formatting
-max_x_s5 <- max(avertable_by_drug_region$upper_bound, na.rm = TRUE)
-avertable_by_drug_region$text_pos_x <- max_x_s5 + 0.05 * (max_x_s5 - min(avertable_by_drug_region$lower_bound, na.rm = TRUE))
+# Calculate text position for uniform formatting based on the rate upper bounds
+max_x_s5 <- max(avertable_by_drug_region$upper_bound_per_100k, na.rm = TRUE)
+avertable_by_drug_region$text_pos_x <- max_x_s5 + 0.05 * (max_x_s5 - min(avertable_by_drug_region$lower_bound_per_100k, na.rm = TRUE))
 
-plot_s5 <- ggplot(avertable_by_drug_region, aes(x = avertable_burden, y = drug)) +
+plot_s5 <- ggplot(avertable_by_drug_region, aes(x = avertable_burden_per_100k, y = drug)) +
   geom_bar(stat = "identity", fill = "grey50", color = "black", width = 0.7) +
-  geom_errorbar(aes(xmin = lower_bound, xmax = upper_bound), width = 0.25, color = "black") +
-  geom_text(aes(x = text_pos_x, label = burden_fmt), hjust = 0, size = 8 / .pt, family = "Helvetica") +
+  geom_errorbar(aes(xmin = lower_bound_per_100k, xmax = upper_bound_per_100k), width = 0.25, color = "black") +
   scale_x_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
-  facet_wrap(~ region, ncol = 1, scales = "free_x") +
-  labs(x = "Deaths averted", y = "") +
+  facet_wrap(~ region, ncol = 1, scales = "fixed") +
+  labs(x = "Deaths averted per 100,000", y = "") +
   theme_minimal() +
   theme(
     panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major.x = element_line(color = "grey85", linewidth = 0.4),
     panel.grid = element_blank(),
     axis.title.x = element_text(size = 10, family = "Helvetica"),
     axis.title.y = element_blank(),
@@ -1903,11 +1920,10 @@ plot_s5 <- ggplot(avertable_by_drug_region, aes(x = avertable_burden, y = drug))
     axis.ticks.x = element_line(color = "black", linewidth = 0.5),
     axis.ticks.length.x = unit(4, "points"),
     axis.ticks.y = element_blank(),
-    strip.text = element_text(size = 10, family = "Helvetica", face = "bold", hjust = 0),
+    strip.text = element_text(size = 9, family = "Helvetica", face = "bold", hjust = 0),
     strip.background = element_blank(),
     panel.spacing = unit(0.5, "lines"),
-    legend.position = "none",
-    plot.margin = margin(10, 130, 10, 10, "points") # Make space for text labels
+    legend.position = "none"
   ) +
   coord_cartesian(clip = "off")
 
@@ -1915,43 +1931,37 @@ ggsave("Supplementary_Figure_5.pdf", plot_s5, width = 8, height = 10, units = "i
 
 
 # -----------------------------------------------------------------------------
-# Supplementary Figure 6 - Avertable burden by pathogen and region
+# Supplementary Figure 6 - Avertable burden by pathogen and region (per 100k)
 # -----------------------------------------------------------------------------
 cat("Generating Supplementary Figure 6...\n")
 
-# Load data with updated canonical output tag
-avertable_by_pathogen_region <- read.csv("Outputs/10pc_avertable_burden_by_pathogen_and_region_canonical_weighted_lower_region_v2.csv", stringsAsFactors = FALSE)
+# Load data 
+avertable_by_pathogen_region <- read.csv("Outputs/10pc_avertable_burden_by_pathogen_and_region_canonical_weighted_upper_region_main_overall.csv", stringsAsFactors = FALSE)
 
-# Apply formatting using the helper function
-avertable_by_pathogen_region <- format_burden(avertable_by_pathogen_region)
-
-# Sort pathogens strictly based on their overall avertable burden sum
+# Sort pathogens strictly based on their overall avertable rate sum
 pathogen_order <- avertable_by_pathogen_region %>% 
   group_by(pathogen) %>% 
-  summarise(total_burden = sum(avertable_burden, na.rm = TRUE)) %>% 
+  summarise(total_burden = sum(avertable_burden_per_100k, na.rm = TRUE)) %>% 
   arrange(total_burden) %>% 
   pull(pathogen)
 
 avertable_by_pathogen_region$pathogen <- factor(avertable_by_pathogen_region$pathogen, levels = pathogen_order)
 
-# Calculate uniform text X-coordinate
-max_x_s6 <- max(avertable_by_pathogen_region$upper_bound, na.rm = TRUE)
-avertable_by_pathogen_region$text_pos_x <- max_x_s6 + 0.05 * (max_x_s6 - min(avertable_by_pathogen_region$lower_bound, na.rm = TRUE))
-
-plot_s6 <- ggplot(avertable_by_pathogen_region, aes(x = avertable_burden, y = pathogen)) +
+plot_s6 <- ggplot(avertable_by_pathogen_region, aes(x = avertable_burden_per_100k, y = pathogen)) +
   geom_bar(stat = "identity", fill = "grey50", color = "black", width = 0.7) +
-  geom_errorbar(aes(xmin = lower_bound, xmax = upper_bound), width = 0.25, color = "black") +
-  geom_text(aes(x = text_pos_x, label = burden_fmt), hjust = 0, size = 8 / .pt, family = "Helvetica") +
+  geom_errorbar(aes(xmin = lower_bound_per_100k, xmax = upper_bound_per_100k), width = 0.25, color = "black") +
   scale_x_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
-  facet_wrap(~ region, ncol = 1, scales = "free_x") +
-  labs(x = "Deaths averted", y = "") +
+  # Use two columns and free x-scales (y-scales remain fixed/shared across rows)
+  facet_wrap(~ region, ncol = 2, scales = "fixed") +
+  labs(x = "Deaths averted per 100,000", y = "") +
   theme_minimal() +
   theme(
     panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major.x = element_line(color = "grey85", linewidth = 0.4),
     panel.grid = element_blank(),
     axis.title.x = element_text(size = 10, family = "Helvetica"),
     axis.title.y = element_blank(),
-    axis.text.x = element_text(size = 10, family = "Helvetica"),
+    axis.text.x = element_text(size = 10, family = "Helvetica", angle = 45, hjust = 1), 
     
     # Italicize pathogen names
     axis.text.y = element_text(size = 10, family = "Helvetica", face = "italic"), 
@@ -1961,11 +1971,13 @@ plot_s6 <- ggplot(avertable_by_pathogen_region, aes(x = avertable_burden, y = pa
     axis.ticks.y = element_blank(),
     
     # Bold region names
-    strip.text = element_text(size = 10, family = "Helvetica", face = "bold", hjust = 0),
+    strip.text = element_text(size = 9, family = "Helvetica", face = "bold", hjust = 0),
     strip.background = element_blank(),
-    panel.spacing = unit(0.5, "lines"),
+    panel.spacing.x = unit(1, "lines"), 
+    panel.spacing.y = unit(0.5, "lines"),
     legend.position = "none",
-    plot.margin = margin(10, 130, 10, 10, "points") # Make space for text labels on the right
+    
+    plot.margin = margin(10, 15, 10, 10, "points") 
   ) +
   coord_cartesian(clip = "off")
 
@@ -2176,11 +2188,12 @@ print(paste0("Peak proportion avertable at use: ", peak_use,
 
 # Population-weighted average of proportion avertable for key regions
 total_burden_by_region <- read.csv(burden_region_path)
-print(total_burden_by_region)
-# selected_regions <- c("Eastern Europe", "Southern Latin America",
-#             "South Asia", "North Africa and Middle East")
-selected_regions <- c("Central Sub-Saharan Africa", "Eastern Sub-Saharan Africa",
-                      "Southern Sub-Saharan Africa", "Western Sub-Saharan Africa")
+# divide total_burden by population and multiply by 100k to get per 100k
+total_burden_by_region$burden_per_100k <- (total_burden_by_region$total_burden / total_burden_by_region$population) * 100000
+selected_regions <- c("Eastern Europe", "Southern Latin America",
+            "South Asia", "North Africa and Middle East")
+# selected_regions <- c("Central Sub-Saharan Africa", "Eastern Sub-Saharan Africa",
+#                       "Southern Sub-Saharan Africa", "Western Sub-Saharan Africa")
 pops <- numeric(length(selected_regions))
 proportions <- numeric(length(selected_regions))
 lower_bounds <- numeric(length(selected_regions))
@@ -2211,7 +2224,10 @@ for (i in seq_along(selected_regions)) {
     avertable_by_region$region == region, "gdp_2018"]
   print(paste0("GDP per capita for ", region, ": ", round(gdp, 2)))
 }
+print(avertable_by_region[c("region", "avertable_burden", "lower_bound", "upper_bound")])
+print(avertable_by_region[c("region", "avertable_burden_per_100k", "lower_bound_per_100k", "upper_bound_per_100k")])
 
+cat("Percent of total burden avertable:", sum(avertable_by_region$avertable_burden)/sum(avertable_by_region$total_burden), "(95% CI: ", sum(avertable_by_region$lower_bound)/sum(avertable_by_region$total_burden), " to ", sum(avertable_by_region$upper_bound)/sum(avertable_by_region$total_burden), ")\n")
 # Precompute Panel A label text and x-position so spacing can be tuned explicitly
 # for manuscript print layout (instead of inheriting slide spacing).
 .panelA_xmax <- max(avertable_by_region$proportion_avertable_upper_bound * 100)
