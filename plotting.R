@@ -70,8 +70,8 @@ antibiotic_names <- c(
 )
 atc_names_map <- setNames(antibiotic_names, classes)
 
-antibiotic_list<- c("Quinolones", "Aminoglycosides", "Non-Penicillin Beta-Lactams", 
-                                     "Penicillins", "Macrolides", "Sulfonamides and Trimethoprim", 
+antibiotic_list<- c("Quinolones", "Macrolides", "Aminoglycosides", "Non-Penicillin Beta-Lactams", 
+                                     "Penicillins", "Sulfonamides and Trimethoprim", 
                                      "Tetracyclines")
 
 # --- 2. Load and Prepare All Data Sources ---
@@ -1913,6 +1913,21 @@ cat("Generating Supplementary Figure 5...\n")
 
 # Load data
 avertable_by_drug_region <- read.csv("Outputs/10pc_avertable_burden_by_drug_and_region_canonical_weighted_upper_region_main_overall.csv", stringsAsFactors = FALSE)
+
+# Recode ATC3 class codes to full antibiotic class names for figure labels.
+s5_drug_name_map <- c(
+  "J01A" = "Tetracyclines",
+  "J01B" = "Glycopeptides and Lipopeptides",
+  "J01C" = "Penicillins",
+  "J01D" = "Non-Penicillin Beta-Lactams",
+  "J01E" = "Sulfonamides and Trimethoprim",
+  "J01F" = "Macrolides",
+  "J01G" = "Aminoglycosides",
+  "J01M" = "Quinolones"
+)
+
+avertable_by_drug_region <- avertable_by_drug_region %>%
+  mutate(drug = dplyr::recode(drug, !!!s5_drug_name_map, .default = drug))
 
 # Filter out unwanted drug categories
 avertable_by_drug_region <- avertable_by_drug_region %>%
