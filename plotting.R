@@ -28,6 +28,38 @@ library(dplyr)
 library(tidyr)
 library(forcats) # For factor manipulation
 
+# Global toggle: set AMR_EXCLUDE_N_GONORRHOEAE=1 when running make figures.
+exclude_n_gonorrhoeae <- tolower(trimws(
+  Sys.getenv("AMR_EXCLUDE_N_GONORRHOEAE", "0")
+)) %in% c("1", "true", "t", "yes", "y")
+
+filter_excluded_pathogen_rows <- function(df, data_name = "data") {
+  if (!exclude_n_gonorrhoeae || !("Pathogen" %in% names(df))) {
+    return(df)
+  }
+
+  before_n <- nrow(df)
+  pathogen_values <- tolower(trimws(as.character(df[["Pathogen"]])))
+  df <- df[!(pathogen_values %in% c(
+    "n. gonorrhoeae",
+    "neisseria gonorrhoeae"
+  )), , drop = FALSE]
+  removed_n <- before_n - nrow(df)
+
+  if (removed_n > 0) {
+    message(
+      "[plotting] Excluded ", removed_n,
+      " N. gonorrhoeae rows from ", data_name, "."
+    )
+  }
+
+  df
+}
+
+if (exclude_n_gonorrhoeae) {
+  message("[plotting] AMR_EXCLUDE_N_GONORRHOEAE enabled.")
+}
+
 # --- 1. Define Names and Order ---
 # Use the same mappings and order from your original script
 classes <- c("J01A", "J01B", "J01C", "J01D", "J01E", "J01F", "J01G", "J01M")
@@ -49,7 +81,8 @@ cat("Loading data for Figure 1...\n")
 pathogen_data <- fread("Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_main.csv") %>%
   mutate(Antibiotic = atc_names_map[Antibiotic]) %>%
   filter(Antibiotic %in% antibiotic_list) %>%
-  mutate(Response_fmt = sprintf("%.2f (%.2f, %.2f)", Response, Lower_CI, Upper_CI))
+  mutate(Response_fmt = sprintf("%.2f (%.2f, %.2f)", Response, Lower_CI, Upper_CI)) %>%
+  filter_excluded_pathogen_rows("pathogen_data")
 
 # Number of bug-drug pairs with significant positive relationships
 num_significant_pairs <- pathogen_data %>%
@@ -463,7 +496,8 @@ pathogen_data_hosp <- fread(
   filter(!is.na(Lower_CI) & !is.na(Upper_CI)) %>%
   mutate(
     Response_fmt = sprintf("%.2f (%.2f, %.2f)", Response, Lower_CI, Upper_CI)
-  )
+  ) %>%
+  filter_excluded_pathogen_rows("pathogen_data_hosp")
 
 # Load Drug-summary data (hospital, for the text labels)
 hosp_summary_grad <- setNames(
@@ -913,6 +947,16 @@ tryCatch({
   plot_data_fig2_summary <- grad_path %>%
     merge(lower_path, by = "Pathogen_Code") %>%
     merge(upper_path, by = "Pathogen_Code") %>%
+    {
+      if (exclude_n_gonorrhoeae) {
+        .[!(tolower(trimws(as.character(Pathogen_Code))) %in% c(
+          "n. gonorrhoeae",
+          "neisseria gonorrhoeae"
+        )), ]
+      } else {
+        .
+      }
+    } %>%
     arrange(desc(Response)) %>%
     mutate(
       Pathogen_Display = Pathogen_Code,
@@ -947,7 +991,8 @@ tryCatch({
     mutate(Pathogen_Display = Pathogen) %>% 
     filter(Pathogen %in% fig2_pathogen_names) %>% 
     mutate(Pathogen_Display = factor(Pathogen_Display, 
-                                    levels = rev(fig2_pathogen_names)))
+                                    levels = rev(fig2_pathogen_names))) %>%
+    filter_excluded_pathogen_rows("bootstrap_data_fig2")
   
   cat("Bootstrap data loaded for Figure 2.\n")
 }, error = function(e) {
@@ -1187,7 +1232,8 @@ library(patchwork)
     mutate(
       Pathogen_Display = .s1_pathogen_map[Pathogen],
       Pathogen_Display = factor(Pathogen_Display, levels = rev(.s1_pathogen_names))
-    )
+    ) %>%
+    filter_excluded_pathogen_rows(paste0("suppfig_s1_bootstrap_", suffix))
 
   list(summary = summary_df, bootstrap = boot_df)
 }
@@ -1696,7 +1742,7 @@ plot <- ggplot(all_data, aes(x = avertable_burden, y = Scenario, fill = Scenario
 
   scale_x_continuous(
     labels = function(x) format(x, big.mark = ",", scientific = FALSE),
-    breaks = seq(0, 44000, by = 10000) # Creates evenly spaced ticks
+    breaks = seq(0, 53000, by = 10000) # Creates evenly spaced ticks
   ) +
 
   # Facet the plot to move pathogen names on top of the bars
@@ -1729,7 +1775,7 @@ plot <- ggplot(all_data, aes(x = avertable_burden, y = Scenario, fill = Scenario
     legend.position = "none",
     plot.margin = margin(2.5, 100, 5.5, 5.5, "points")
   ) +
-  coord_cartesian(xlim = c(-100, 44000), clip = "off")
+  coord_cartesian(xlim = c(-100, 53000), clip = "off")
 # print total avertable burden in main, optimistic, and pessimistic
 # scenarios
 message(
