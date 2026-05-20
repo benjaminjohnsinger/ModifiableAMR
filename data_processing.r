@@ -94,7 +94,6 @@ prepare_main_regression_data <- function(
     atlas_path = "ATLAS_data/ATLAS_data_renamed.csv",
     atlas2_path = "ATLAS_more/ATLAS_more_renamed.csv",
     atlase_path = "ATLAS_Enterococcus/ATLAS_Enterococcus_renamed.csv",
-    gasp_path = "GASP_N_renamed.csv",
     consumption_path = "antibiotic_consumption_by_ATC3.csv",
     pca_path = "Chungman/Chungman_pca_renamed.csv",
     no_covariates_path = "merged_data_new_no_covariates.csv",
@@ -102,7 +101,7 @@ prepare_main_regression_data <- function(
     sums_output_path = "merged_data_sums_new.csv",
     year_cutoff = 2018
 ) {
-  ## Merge Joe's data with ATLAS and GASP data
+  ## Merge Joe's data with ATLAS
   JOE <- read.csv(joe_path)
   ATLAS <- read.csv(atlas_path)
   ATLAS2 <- read.csv(atlas2_path)
@@ -111,13 +110,12 @@ prepare_main_regression_data <- function(
   ATLAS <- rbind(ATLAS, ATLAS2, ATLASE)
   # remove duplicated rows
   ATLAS <- ATLAS[!duplicated(ATLAS), ]
-  GASP <- read.csv(gasp_path)
 
   JOE <- JOE[,c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
   ATLAS <- ATLAS[,c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
 
   # Merge datasets
-  merged_data <- rbind(JOE, ATLAS, GASP)
+  merged_data <- rbind(JOE, ATLAS)
   # Coerce to numeric in case any source file reads them as character
   merged_data$Total.Isolates <- as.numeric(merged_data$Total.Isolates)
   merged_data$Percent.Resistant.Isolates <- as.numeric(merged_data$Percent.Resistant.Isolates)
