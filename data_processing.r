@@ -101,7 +101,7 @@ prepare_main_regression_data <- function(
     sums_output_path = "merged_data_sums_new.csv",
     year_cutoff = 2018
 ) {
-  ## Merge Joe's data with ATLAS
+  ## Merge Joe's data with ATLAS and GASP data
   JOE <- read.csv(joe_path)
   ATLAS <- read.csv(atlas_path)
   ATLAS2 <- read.csv(atlas2_path)
@@ -130,6 +130,9 @@ prepare_main_regression_data <- function(
   merged_data <- merged_data[merged_data$Year <= year_cutoff, ]
   # Remove HKG
   merged_data <- merged_data[merged_data$ISO3 != "HKG", ]
+
+  # Remove rows with N. gonorrheae - not subject to same bystander exposures as other pathogens
+  merged_data <- merged_data[!grepl("gonorrhoeae", tolower(merged_data$Pathogen)), ]
 
   # Load GRAM consumption data
   consumption <- read.csv(consumption_path)
