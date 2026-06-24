@@ -1,0 +1,11 @@
+"Pathogen","Antibiotic","Gradient"
+"E. coli","J01C",-0.00079158432079619
+"P. aeruginosa","J01C",-0.334339049160129
+"S. aureus","J01C",0.00558201786067514
+"Acinetobacter spp.","J01D",0.0176399025800225
+"Enterobacter spp.","J01D",0.606671016264267
+"K. pneumoniae","J01D",0.262880293449433
+"P. aeruginosa","J01D",-0.0613985855279072
+"P. aeruginosa","J01G",-0.0197896281411635
+"E. coli","J01M",0.271799855918121
+"P. aeruginosa","J01M",-0.189648702304231
