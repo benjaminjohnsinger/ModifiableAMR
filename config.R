@@ -22,6 +22,7 @@ AMR_CONFIG <- list(
     default = "main",
     all = c(
       "main",
+      "main_binomial",
       "hic",
       "lmic",
       "raw_iqvia",

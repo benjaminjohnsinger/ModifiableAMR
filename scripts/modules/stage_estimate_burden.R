@@ -10,13 +10,14 @@ run_estimate_burden_stage <- function(scenario = get_amr_scenario()) {
   )
   if (scenario == "hic")  tags <- list(pathogen_tag = "HIC",  class_tag = "HIC")
   if (scenario == "lmic") tags <- list(pathogen_tag = "LMIC", class_tag = "LMIC")
+  if (scenario == "main_binomial") tags <- list(pathogen_tag = "main_binomial", class_tag = "all_binomial")
 
   gradients_path           <- paste0("Outputs/database_gradients_ATC3_PCA_canonical_weighted_",           tags$class_tag,    ".csv")
   gradients_bootstrap_path <- paste0("Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_", tags$class_tag,    ".csv")
   results_path             <- paste0("Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_",  tags$pathogen_tag, ".csv")
   results_bootstrap_path   <- paste0("Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_canonical_weighted_", tags$pathogen_tag, ".csv")
 
-  if (grepl("^burden_", scenario) || scenario %in% c("main", "hic", "lmic")) {
+  if (grepl("^burden_", scenario) || scenario %in% c("main", "main_binomial", "hic", "lmic")) {
     require_inputs(c(
       "IHME_AMR/IHME_AMR_fitted_gammas_v2.csv",
       "IHME_AMR/IHME_AMR_PATHOGEN_2019_DATA_COUNTED_AB.CSV",
@@ -26,7 +27,7 @@ run_estimate_burden_stage <- function(scenario = get_amr_scenario()) {
     ), stage = "estimate_burden")
   }
 
-  if (grepl("^burden_", scenario) || scenario %in% c("main", "hic", "lmic")) {
+  if (grepl("^burden_", scenario) || scenario %in% c("main", "main_binomial", "hic", "lmic")) {
     message("[estimate_burden] Running burden estimation script...")
     # Pass the resolved paths and scenario as global options before sourcing
     options(

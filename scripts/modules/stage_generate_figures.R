@@ -3,11 +3,76 @@ source("config.R")
 run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
   message("[generate_figures] scenario: ", scenario)
 
-  if (scenario %in% c("main", "hic", "lmic")) {
+  # Resolve model-output tags for figure inputs.
+  # Defaults preserve canonical main behavior.
+  plot_tags <- list(
+    pathogen_tag = "main",
+    class_tag = "all",
+    random_pathogen_tag = "all"
+  )
+  if (scenario == "main_binomial") {
+    plot_tags <- list(
+      pathogen_tag = "main_binomial",
+      class_tag = "all_binomial",
+      random_pathogen_tag = "all_binomial"
+    )
+  } else if (scenario == "hic") {
+    plot_tags <- list(
+      pathogen_tag = "HIC",
+      class_tag = "HIC",
+      random_pathogen_tag = "HIC"
+    )
+  } else if (scenario == "lmic") {
+    plot_tags <- list(
+      pathogen_tag = "LMIC",
+      class_tag = "LMIC",
+      random_pathogen_tag = "LMIC"
+    )
+  }
+
+  fig1_pathogen_input <- paste0(
+    "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_",
+    plot_tags$pathogen_tag,
+    ".csv"
+  )
+  fig1_class_gradients_input <- paste0(
+    "Outputs/database_gradients_ATC3_PCA_canonical_weighted_",
+    plot_tags$class_tag,
+    ".csv"
+  )
+  fig1_class_bootstrap_input <- paste0(
+    "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_",
+    plot_tags$class_tag,
+    ".csv"
+  )
+  fig2_pathogen_input <- paste0(
+    "Outputs/database_gradients_pathogen_PCA_canonical_weighted_",
+    plot_tags$random_pathogen_tag,
+    ".csv"
+  )
+  fig2_pathogen_bootstrap_input <- paste0(
+    "Outputs/database_gradients_bootstraps_pathogen_PCA_canonical_weighted_",
+    plot_tags$random_pathogen_tag,
+    ".csv"
+  )
+
+  message(
+    "[generate_figures] figure tags: pathogen_tag=", plot_tags$pathogen_tag,
+    ", class_tag=", plot_tags$class_tag,
+    ", random_pathogen_tag=", plot_tags$random_pathogen_tag
+  )
+  message("[generate_figures] Figure1 pathogen input: ", fig1_pathogen_input)
+  message("[generate_figures] Figure1 class bootstrap input: ", fig1_class_bootstrap_input)
+  message("[generate_figures] Figure2 pathogen input: ", fig2_pathogen_input)
+  message("[generate_figures] Figure2 pathogen bootstrap input: ", fig2_pathogen_bootstrap_input)
+
+  if (scenario %in% c("main", "main_binomial", "hic", "lmic")) {
     require_inputs(c(
-      "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_main.csv",
-      "Outputs/database_gradients_ATC3_PCA_canonical_weighted_all.csv",
-      "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_all.csv"
+      fig1_pathogen_input,
+      fig1_class_gradients_input,
+      fig1_class_bootstrap_input,
+      fig2_pathogen_input,
+      fig2_pathogen_bootstrap_input
     ), stage = "generate_figures")
   } else if (scenario == "hospital_nagorsen") {
     require_input(
@@ -29,16 +94,22 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
   dir.create(AMR_CONFIG$output_dirs$manuscript, recursive = TRUE, showWarnings = FALSE)
   dir.create(AMR_CONFIG$output_dirs$slides, recursive = TRUE, showWarnings = FALSE)
 
-  if (scenario %in% c("main", "hic", "lmic", "hospital_nagorsen")) {
+  if (scenario %in% c("main", "main_binomial", "hic", "lmic", "hospital_nagorsen")) {
     message("[generate_figures] Running canonical figure module...")
+    old_options <- options(
+      amr_plot_pathogen_tag = plot_tags$pathogen_tag,
+      amr_plot_class_tag = plot_tags$class_tag,
+      amr_plot_random_pathogen_tag = plot_tags$random_pathogen_tag
+    )
+    on.exit(options(old_options), add = TRUE)
     source(AMR_CONFIG$canonical$figure_module)
     write_figure_metadata("Figure1.pdf",
-      inputs = c("Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_main.csv",
-                 "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_all.csv"),
+      inputs = c(fig1_pathogen_input,
+                 fig1_class_bootstrap_input),
       scenario = scenario)
     write_figure_metadata("Figure2.pdf",
-      inputs = c("Outputs/database_gradients_pathogen_PCA_canonical_weighted_all.csv",
-                 "Outputs/database_gradients_bootstraps_pathogen_PCA_canonical_weighted_all.csv"),
+      inputs = c(fig2_pathogen_input,
+                 fig2_pathogen_bootstrap_input),
       scenario = scenario)
     if (burden_files_present) {
       write_figure_metadata("Figure3.pdf",

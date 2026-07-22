@@ -21,12 +21,107 @@ if (!exists("AMR_CONFIG")) source("config.R")
 SLIDES_DIR <- AMR_CONFIG$output_dirs$slides
 dir.create(SLIDES_DIR, recursive = TRUE, showWarnings = FALSE)
 
+# Scenario-aware model output tags for figure inputs.
+# Defaults preserve historical behavior (main/all tags).
+plot_pathogen_tag <- getOption("amr_plot_pathogen_tag", "main")
+plot_class_tag <- getOption("amr_plot_class_tag", "all")
+plot_random_pathogen_tag <- getOption("amr_plot_random_pathogen_tag", "all")
+
+fig1_pathogen_path <- paste0(
+  "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_",
+  plot_pathogen_tag,
+  ".csv"
+)
+fig1_class_gradients_path <- paste0(
+  "Outputs/database_gradients_ATC3_PCA_canonical_weighted_",
+  plot_class_tag,
+  ".csv"
+)
+fig1_class_lower_path <- paste0(
+  "Outputs/database_lowerCI_ATC3_PCA_canonical_weighted_",
+  plot_class_tag,
+  ".csv"
+)
+fig1_class_upper_path <- paste0(
+  "Outputs/database_upperCI_ATC3_PCA_canonical_weighted_",
+  plot_class_tag,
+  ".csv"
+)
+fig1_class_bootstrap_path <- paste0(
+  "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_",
+  plot_class_tag,
+  ".csv"
+)
+
+fig2_pathogen_gradients_path <- paste0(
+  "Outputs/database_gradients_pathogen_PCA_canonical_weighted_",
+  plot_random_pathogen_tag,
+  ".csv"
+)
+fig2_pathogen_lower_path <- paste0(
+  "Outputs/database_lowerCI_pathogen_PCA_canonical_weighted_",
+  plot_random_pathogen_tag,
+  ".csv"
+)
+fig2_pathogen_upper_path <- paste0(
+  "Outputs/database_upperCI_pathogen_PCA_canonical_weighted_",
+  plot_random_pathogen_tag,
+  ".csv"
+)
+fig2_pathogen_bootstrap_path <- paste0(
+  "Outputs/database_gradients_bootstraps_pathogen_PCA_canonical_weighted_",
+  plot_random_pathogen_tag,
+  ".csv"
+)
+
+message(
+  "[plotting] input tags: pathogen_tag=", plot_pathogen_tag,
+  ", class_tag=", plot_class_tag,
+  ", random_pathogen_tag=", plot_random_pathogen_tag
+)
+message("[plotting] Figure1 pathogen input: ", fig1_pathogen_path)
+message("[plotting] Figure1 class input: ", fig1_class_gradients_path)
+message("[plotting] Figure1 class bootstrap input: ", fig1_class_bootstrap_path)
+message("[plotting] Figure2 pathogen input: ", fig2_pathogen_gradients_path)
+message("[plotting] Figure2 pathogen bootstrap input: ", fig2_pathogen_bootstrap_path)
+
 # Load necessary libraries (add ggplot2 if not already present)
 library(ggplot2)
 library(data.table)
 library(dplyr)
 library(tidyr)
 library(forcats) # For factor manipulation
+
+plot_scenario <- getOption(
+  "amr_scenario",
+  Sys.getenv("ANALYSIS_SCENARIO", Sys.getenv("SCENARIO", "main"))
+)
+is_binomial_plot_scenario <- identical(plot_scenario, "main_binomial")
+
+tag_output_filename <- function(path, tag = "binomial") {
+  if (!is_binomial_plot_scenario) {
+    return(path)
+  }
+  sub("\\.([^.]+)$", paste0("_", tag, ".\\1"), path)
+}
+
+if (is_binomial_plot_scenario) {
+  message("[plotting] main_binomial scenario detected; tagging output files with '_binomial'.")
+
+  ggsave <- local({
+    ggsave_impl <- ggplot2::ggsave
+    function(filename, ...) {
+      ggsave_impl(filename = tag_output_filename(filename), ...)
+    }
+  })
+
+  pdf <- local({
+    pdf_impl <- grDevices::pdf
+    function(file, ...) {
+      pdf_impl(file = tag_output_filename(file), ...)
+    }
+  })
+}
 
 # Global toggle: set AMR_EXCLUDE_N_GONORRHOEAE=1 when running make figures.
 exclude_n_gonorrhoeae <- tolower(trimws(
@@ -78,7 +173,7 @@ antibiotic_list<- c("Quinolones", "Macrolides", "Aminoglycosides", "Non-Penicill
 cat("Loading data for Figure 1...\n")
 
 # Load Pathogen-specific data
-pathogen_data <- fread("Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_main.csv") %>%
+pathogen_data <- fread(fig1_pathogen_path) %>%
   mutate(Antibiotic = atc_names_map[Antibiotic]) %>%
   filter(Antibiotic %in% antibiotic_list) %>%
   mutate(Response_fmt = sprintf("%.2f (%.2f, %.2f)", Response, Lower_CI, Upper_CI)) %>%
@@ -98,13 +193,13 @@ p_value <- pbinom(num_significant_pairs - 1, total_pairs, 0.025, lower.tail = FA
 cat(paste("Binomial test p-value:", format(p_value, scientific = TRUE, digits = 10), "\n"))
 
 # Load Drug-summary data (for the text labels)
-summary_data <- fread("Outputs/database_gradients_ATC3_PCA_canonical_weighted_all.csv") %>%
+summary_data <- fread(fig1_class_gradients_path) %>%
   mutate(Antibiotic = atc_names_map[as.character(V1)]) %>%
   filter(Antibiotic %in% antibiotic_list)
-summary_data_LowerCI <- fread("Outputs/database_lowerCI_ATC3_PCA_canonical_weighted_all.csv") %>%
+summary_data_LowerCI <- fread(fig1_class_lower_path) %>%
   mutate(Antibiotic = atc_names_map[as.character(V1)]) %>%
   filter(Antibiotic %in% antibiotic_list)
-summary_data_UpperCI <- fread("Outputs/database_upperCI_ATC3_PCA_canonical_weighted_all.csv") %>%
+summary_data_UpperCI <- fread(fig1_class_upper_path) %>%
     mutate(Antibiotic = atc_names_map[as.character(V1)]) %>%
     filter(Antibiotic %in% antibiotic_list)
 summary_data <- summary_data %>%
@@ -114,13 +209,17 @@ summary_data <- summary_data %>%
     rename(Response = x)
 # Load Bootstrap gradient data (for the violins)
 tryCatch({
-  bootstrap_data <- fread("Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_all.csv") %>%
+  bootstrap_data <- fread(fig1_class_bootstrap_path) %>%
     mutate(Antibiotic = atc_names_map[Antibiotic]) %>%
     filter(Antibiotic %in% antibiotic_list)
   cat("Bootstrap data loaded for Figure 1.\n")
 }, error = function(e) {
-  stop("Could not load 'Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_all.csv'. 
-       Please generate this file from your modeling script first.")
+  stop(
+    "Could not load Figure 1 class bootstrap input: ",
+    fig1_class_bootstrap_path,
+    ". Please generate this file from your modeling script first.",
+    call. = FALSE
+  )
 })
 
 # print standard deviation of summary_data gradients with confidence intervals
@@ -216,6 +315,17 @@ plot_violins <- left_join(
   by = c("Antibiotic", "Plot_Label")
 )
 
+if (is_binomial_plot_scenario) {
+  xlabel <- "Coefficient"
+  limits <- c(-7.3, 7.6)
+  breaks <- c(-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5)
+} else {
+  xlabel <- "Elasticity"
+  limits <- c(-2.3, 4.1)
+  breaks <- c(-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3)
+}
+
+
 # --- 6. Generate the Plot (with Corrected Y-Axis) ---
 cat("Generating plot for Figure 1...\n")
 p_final_plot <- ggplot() +
@@ -245,29 +355,29 @@ p_final_plot <- ggplot() +
   # --- LEFT TEXT (Replaces axis.text.y) ---
   geom_text(
     data = plot_df %>% filter(Type == "Header"),
-    aes(x = -2.3, y = Order, label = Plot_Label),
+    aes(x = limits[1], y = Order, label = Plot_Label),
     hjust = 0, size = 8 / .pt, fontface = "bold"
   ) +
   geom_text(
     data = plot_df %>% filter(Type == "Pathogen"),
-    aes(x = -2.3, y = Order, label = Plot_Label),
+    aes(x = limits[1], y = Order, label = Plot_Label),
     hjust = 0, size = 8 / .pt, fontface = "italic"
   ) +
   geom_text(
     data = plot_df %>% filter(Type == "Total"),
-    aes(x = -2.3, y = Order, label = Plot_Label),
+    aes(x = limits[1], y = Order, label = Plot_Label),
     hjust = 0, size = 8 / .pt, fontface = "bold"
   ) +
   
   # --- RIGHT TEXT ---
   geom_text(
     data = plot_df %>% filter(Type == "Pathogen"),
-    aes(x = 4.1, y = Order, label = Response_fmt),
+    aes(x = limits[2], y = Order, label = Response_fmt),
     hjust = 1, size = 8 / .pt, fontface = "plain"
   ) +
   geom_text(
     data = plot_df %>% filter(Type == "Total"),
-    aes(x = 4.1, y = Order, label = Response_fmt),
+    aes(x = limits[2], y = Order, label = Response_fmt),
     hjust = 1, size = 8 / .pt, fontface = "bold"
   ) +
   
@@ -275,15 +385,15 @@ p_final_plot <- ggplot() +
 geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
 
 # --- NEW: Manually draw the x-axis line exactly from -1 to 3 ---
-annotate("segment", x = -1, xend = 3, y = Inf, yend = Inf, color = "black", linewidth = 0.5) +
+annotate("segment", x = breaks[1], xend = breaks[length(breaks)], y = Inf, yend = Inf, color = "black", linewidth = 0.5) +
 
 # --- Theming and Axis ---
 
 # Expand limits drastically to the left to act as a placeholder for the text
 scale_x_continuous(
-  "Elasticity",
-  limits = c(-2.3, 4.1), 
-  breaks = c(-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3)
+  xlabel,
+  limits = limits, 
+  breaks = breaks
 ) +
 
 # Remove the explicit labels mapped to the Y axis since geom_text handles them
@@ -931,15 +1041,15 @@ cat("Loading pathogen-level summary and bootstrap data for Figure 2...\n")
 tryCatch({
   # Load data to detect pathogens and order by elasticity
   grad_path <- fread(
-    "Outputs/database_gradients_pathogen_PCA_canonical_weighted_all.csv",
+    fig2_pathogen_gradients_path,
     col.names = c("Pathogen_Code", "Response")
   )
   lower_path <- fread(
-    "Outputs/database_lowerCI_pathogen_PCA_canonical_weighted_all.csv",
+    fig2_pathogen_lower_path,
     col.names = c("Pathogen_Code", "Lower_CI")
   )
   upper_path <- fread(
-    "Outputs/database_upperCI_pathogen_PCA_canonical_weighted_all.csv",
+    fig2_pathogen_upper_path,
     col.names = c("Pathogen_Code", "Upper_CI")
   )
 
@@ -987,7 +1097,7 @@ cat("Standard deviation of pathogen Response values:",
 # Load Bootstrap Data (for violins)
 tryCatch({
   # This file path was already correct
-  bootstrap_data_fig2 <- fread("Outputs/database_gradients_bootstraps_pathogen_PCA_canonical_weighted_all.csv") %>%
+  bootstrap_data_fig2 <- fread(fig2_pathogen_bootstrap_path) %>%
     mutate(Pathogen_Display = Pathogen) %>% 
     filter(Pathogen %in% fig2_pathogen_names) %>% 
     mutate(Pathogen_Display = factor(Pathogen_Display, 
@@ -996,7 +1106,11 @@ tryCatch({
   
   cat("Bootstrap data loaded for Figure 2.\n")
 }, error = function(e) {
-  stop("Could not load pathogen bootstrap data.")
+  stop(
+    "Could not load Figure 2 pathogen bootstrap input: ",
+    fig2_pathogen_bootstrap_path,
+    call. = FALSE
+  )
 })
 
 # --- 3. Create Shading Dataframe for Figure 2 ---
@@ -1649,6 +1763,68 @@ antibiotic_names<- c(  "Tetracyclines",
   "Quinolones") 
 atc_names <- setNames(antibiotic_names, classes)
 
+# Export total IHME burden by pathogen and drug class (non-avertable burden).
+write_ihme_total_burden_table <- function(
+    ihme_fitted_path = "IHME_AMR/IHME_AMR_fitted_gammas_v2.csv",
+    output_path = "Outputs/ihme_total_burden_by_pathogen_and_drug_class.txt"
+) {
+  if (!file.exists(ihme_fitted_path)) {
+    message(
+      "[plotting] IHME fitted data not found; skipping burden table export: ",
+      ihme_fitted_path
+    )
+    return(invisible(NULL))
+  }
+
+  ihme_raw <- read.csv(ihme_fitted_path, stringsAsFactors = FALSE)
+
+  # Recode IHME antibiotic classes into ATC3 classes used across the analysis.
+  for (atc_code in names(atc_mapping)) {
+    ihme_raw[ihme_raw$antibiotic_class %in% atc_mapping[[atc_code]], "antibiotic_class"] <- atc_code
+  }
+
+  # Apply canonical pathogen naming used in the manuscript outputs.
+  mapped_idx <- match(ihme_raw$pathogen, bacteria_mapping$in_names)
+  has_mapping <- !is.na(mapped_idx)
+  ihme_raw$pathogen[has_mapping] <- bacteria_mapping$canonical_names[mapped_idx[has_mapping]]
+
+  # true_val_att is baseline IHME attributable burden (not avertable burden).
+  ihme_total_burden_by_pathogen_drug <- ihme_raw %>%
+    filter(!is.na(pathogen), !is.na(antibiotic_class)) %>%
+    filter(!antibiotic_class %in% c(
+      "Other",
+      "J01X",
+      "Multi-drug resistance in Salmonella Typhi and Paratyphi"
+    )) %>%
+    group_by(pathogen, antibiotic_class) %>%
+    summarise(total_burden = sum(true_val_att, na.rm = TRUE), .groups = "drop") %>%
+    mutate(total_burden = round(total_burden, 0)) %>%
+    arrange(pathogen, desc(total_burden)) %>%
+    tidyr::pivot_wider(
+      names_from = antibiotic_class,
+      values_from = total_burden,
+      values_fill = 0
+    )
+
+  dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)
+  write.table(
+    ihme_total_burden_by_pathogen_drug,
+    file = output_path,
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+
+  message(
+    "[plotting] Wrote IHME total burden by pathogen and drug class: ",
+    output_path
+  )
+
+  invisible(ihme_total_burden_by_pathogen_drug)
+}
+
+write_ihme_total_burden_table()
+
 
 # Figure 3 - global avertable burden
 # Input paths declared in config.R AMR_CONFIG$burden_inputs for single-point editing
@@ -1989,6 +2165,86 @@ plot_s5 <- ggplot(avertable_by_drug_region, aes(x = avertable_burden_per_100k, y
   coord_cartesian(clip = "off")
 
 ggsave("Supplementary_Figure_5.pdf", plot_s5, width = 8, height = 10, units = "in")
+
+
+# -----------------------------------------------------------------------------
+# Avertable burden by drug class
+# -----------------------------------------------------------------------------
+cat("Generating avertable_by_drug_class_figure.pdf...\n")
+
+# Load data
+drug_input_path <- "Outputs/10pc_avertable_burden_by_drug_canonical_weighted_upper_region_main_overall.csv"
+drug_region_input_path <- "Outputs/10pc_avertable_burden_by_drug_and_region_canonical_weighted_upper_region_main_overall.csv"
+
+if (file.exists(drug_input_path)) {
+  cat("Using drug burden input: ", drug_input_path, "\n")
+  avertable_by_drug <- read.csv(drug_input_path, stringsAsFactors = FALSE)
+} else if (file.exists(drug_region_input_path)) {
+  cat("Using drug-region burden input: ", drug_region_input_path, "\n")
+  avertable_by_drug <- read.csv(drug_region_input_path, stringsAsFactors = FALSE) %>%
+    group_by(drug) %>%
+    summarise(
+      avertable_burden = sum(avertable_burden, na.rm = TRUE),
+      lower_bound = sum(lower_bound, na.rm = TRUE),
+      upper_bound = sum(upper_bound, na.rm = TRUE),
+      .groups = "drop"
+    )
+} else {
+  stop("No main-scenario by-drug or by-drug-and-region avertable burden CSV found in Outputs/.")
+}
+
+# Recode ATC3 class codes to full antibiotic class names for figure labels.
+s5_drug_name_map <- c(
+  "J01A" = "Tetracyclines",
+  "J01B" = "Glycopeptides and Lipopeptides",
+  "J01C" = "Penicillins",
+  "J01D" = "Non-Penicillin Beta-Lactams",
+  "J01E" = "Sulfonamides and Trimethoprim",
+  "J01F" = "Macrolides",
+  "J01G" = "Aminoglycosides",
+  "J01M" = "Quinolones"
+)
+
+avertable_by_drug <- avertable_by_drug %>%
+  mutate(drug = dplyr::recode(drug, !!!s5_drug_name_map, .default = drug))
+
+# Filter out unwanted drug categories
+avertable_by_drug <- avertable_by_drug %>%
+  filter(!drug %in% c("Other", "J01X", "Multi-drug resistance in Salmonella Typhi and Paratyphi"))
+
+# Order drugs by their total avertable burden
+drug_order <- avertable_by_drug %>%
+  group_by(drug) %>%
+  summarise(total_burden = sum(avertable_burden, na.rm = TRUE)) %>%
+  arrange(total_burden) %>%
+  pull(drug)
+
+avertable_by_drug$drug <- factor(avertable_by_drug$drug, levels = drug_order)
+
+plot_drug_class <- ggplot(avertable_by_drug, aes(x = avertable_burden, y = drug)) +
+  geom_bar(stat = "identity", fill = "grey50", color = "black", width = 0.7) +
+  geom_errorbar(aes(xmin = lower_bound, xmax = upper_bound), width = 0.25, color = "black") +
+  scale_x_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+  labs(x = "Deaths averted", y = "") +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major.x = element_line(color = "grey85", linewidth = 0.4),
+    panel.grid = element_blank(),
+    axis.title.x = element_text(size = 10, family = "Helvetica"),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(size = 10, family = "Helvetica"),
+    axis.text.y = element_text(size = 10, family = "Helvetica"),
+    axis.line.x = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length.x = unit(4, "points"),
+    axis.ticks.y = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(10, 15, 10, 10, "points")
+  ) +
+  coord_cartesian(clip = "off")
+
+ggsave("avertable_by_drug_class_figure.pdf", plot_drug_class, width = 8, height = 6.5, units = "in")
 
 
 # -----------------------------------------------------------------------------
