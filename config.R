@@ -33,7 +33,10 @@ AMR_CONFIG <- list(
       "burden_upper_region",
       "burden_drug_region",
       "burden_pathogen_region",
-      "permutation"
+      "permutation",
+      "exploratory_lagged",
+      "consumption_lagged",
+      "extra_pcs"
     ),
     manuscript = c("main")
   ),

@@ -156,6 +156,13 @@ load_nagorsen_model_inputs <- function(
     data$PC1 <- df_pc$PC1[idx]
     data$PC2 <- df_pc$PC2[idx]
     data$PC3 <- df_pc$PC3[idx]
+    data$PC4 <- df_pc$PC4[idx]
+    data$PC5 <- df_pc$PC5[idx]
+    data$PC6 <- df_pc$PC6[idx]
+    data$PC7 <- df_pc$PC7[idx]
+    data$PC8 <- df_pc$PC8[idx]
+    data$PC9 <- df_pc$PC9[idx]
+    data$PC10 <- df_pc$PC10[idx]
     data$GDP <- df_pc$GDP[idx]
 
     data <- data %>%
@@ -170,6 +177,13 @@ load_nagorsen_model_inputs <- function(
             PC1 = PC1,
             PC2 = PC2,
             PC3 = PC3,
+            PC4 = PC4,
+            PC5 = PC5,
+            PC6 = PC6,
+            PC7 = PC7,
+            PC8 = PC8,
+            PC9 = PC9,
+            PC10 = PC10,
             GDP = GDP,
             Year = end_year
         )
@@ -217,7 +231,7 @@ load_model_inputs <- function(
             Weight = Total.Isolates
         )
 
-    country_covariates <- c("PC1", "PC2", "PC3", "GDP", "Year")
+    country_covariates <- c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "GDP", "Year")
     data$GDP <- data$GDP / mean(data$GDP, na.rm = TRUE)
 
     data <- data[
@@ -317,30 +331,38 @@ scale_and_log_transform <- function(df, global_consumption, consumption_only = F
     df
 }
 
-get_fixed_effects_formula <- function() {
-    Resistance ~ Consumption + PC1 + PC2 + PC3 + GDP + Year
+get_fixed_effects_formula <- function(extra_pcs = FALSE) {
+    if (extra_pcs) {
+        Resistance ~ Consumption + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10 + GDP + Year
+    } else {
+        Resistance ~ Consumption + PC1 + PC2 + PC3 + GDP + Year
+    }
 }
 
-fit_weighted_lm <- function(data_subset) {
+fit_weighted_lm <- function(data_subset, extra_pcs = FALSE) {
     lm(
-        formula = get_fixed_effects_formula(),
+        formula = get_fixed_effects_formula(extra_pcs = extra_pcs),
         data = data_subset,
         weights = Weight
     )
 }
 
-fit_binomial_glm <- function(data_subset) {
+fit_binomial_glm <- function(data_subset, extra_pcs = FALSE) {
     glm(
-        formula = cbind(resistant_count, Weight - resistant_count) ~ Consumption + PC1 + PC2 + PC3 + GDP + Year,
+        formula = get_fixed_effects_formula(extra_pcs = extra_pcs) |> update(cbind(resistant_count, Weight - resistant_count) ~ .),
         data = data_subset,
         family = binomial(link = "logit")
     )
 }
 
-fit_random_lmer <- function(data_subset, random_effect_var) {
+fit_random_lmer <- function(data_subset, random_effect_var, extra_pcs = FALSE) {
     formula_str <- paste0(
-        "Resistance ~ Consumption + (Consumption||", random_effect_var,
-        ") + PC1 + PC2 + PC3 + GDP + Year"
+        paste0(
+            "Resistance ~ Consumption + (Consumption||", random_effect_var,
+            ") + PC1 + PC2 + PC3",
+            if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "",
+            " + GDP + Year"
+        )
     )
     lmer(
         formula = as.formula(formula_str),
@@ -349,10 +371,14 @@ fit_random_lmer <- function(data_subset, random_effect_var) {
     )
 }
 
-fit_binomial_glmer <- function(data_subset, random_effect_var) {
+fit_binomial_glmer <- function(data_subset, random_effect_var, extra_pcs = FALSE) {
     formula_str <- paste0(
         "cbind(resistant_count, Weight - resistant_count) ~ Consumption + (Consumption||", random_effect_var,
-        ") + PC1 + PC2 + PC3 + GDP + Year"
+        paste0(
+            ") + PC1 + PC2 + PC3",
+            if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "",
+            " + GDP + Year"
+        )
     )
     glmer(
         formula = as.formula(formula_str),
@@ -411,18 +437,17 @@ append_random_effects_result <- function(
     accumulator
 }
 
-extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL) {
+extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL, extra_pcs = FALSE) {
     gradient <- summary(model)$coefficients["Consumption", 1]
     intercept <- summary(model)$coefficients["(Intercept)", 1]
-    intervals <- confint(model)
 
     if (boot_nsim > 0 && !is.null(data_subset)) {
-        bootstrap_values <- tryCatch(
+        boot_result <- tryCatch(
             {
                 unique_countries <- unique(data_subset$ISO3)
                 n_countries <- length(unique_countries)
                 
-                replicate(boot_nsim, {
+                boot_values <- replicate(boot_nsim, {
                     sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
                     idx <- unlist(lapply(sampled_countries, function(iso) {
                         which(data_subset$ISO3 == iso)
@@ -430,32 +455,52 @@ extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL)
                     
                     bdf <- data_subset[idx, ]
                     mb <- lm(
-                        Resistance ~ Consumption + PC1 + PC2 + PC3 + GDP + Year,
+                        Resistance ~ Consumption + PC1 + PC2 + PC3 + 
+                            if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "" +
+                            " + GDP + Year",
                         data = bdf,
                         weights = Weight
                     )
                     summary(mb)$coefficients["Consumption", 1]
                 })
+                
+                # FIX: Calculate quantiles from the bootstrap values
+                list(
+                    lower_ci = quantile(boot_values, 0.025, na.rm = TRUE),
+                    upper_ci = quantile(boot_values, 0.975, na.rm = TRUE),
+                    bootstrap_values = boot_values
+                )
             },
             error = function(e) {
-                warning("Cluster bootstrap failed for LM Consumption term; using point estimate fallback. Error: ", conditionMessage(e))
-                gradient
+                warning("Cluster bootstrap failed for LM Consumption term; using Wald CI fallback. Error: ", conditionMessage(e))
+                intervals <- confint(model)
+                list(
+                    lower_ci = intervals["Consumption", 1],
+                    upper_ci = intervals["Consumption", 2],
+                    bootstrap_values = gradient
+                )
             }
         )
+        lower_ci <- boot_result$lower_ci
+        upper_ci <- boot_result$upper_ci
+        bootstrap_values <- boot_result$bootstrap_values
     } else {
+        intervals <- confint(model)
+        lower_ci <- intervals["Consumption", 1]
+        upper_ci <- intervals["Consumption", 2]
         bootstrap_values <- gradient
     }
 
     list(
         gradient = gradient,
         intercept = intercept,
-        lower_ci = intervals["Consumption", 1],
-        upper_ci = intervals["Consumption", 2],
+        lower_ci = lower_ci,
+        upper_ci = upper_ci,
         bootstrap_values = bootstrap_values
     )
 }
 
-extract_glm_binomial_consumption_summary <- function(model, boot_nsim, data_subset = NULL) {
+extract_glm_binomial_consumption_summary <- function(model, boot_nsim, data_subset = NULL, extra_pcs = FALSE) {
     gradient <- coef(model)[["Consumption"]]
     intercept <- coef(model)[["(Intercept)"]]
 
@@ -472,7 +517,9 @@ extract_glm_binomial_consumption_summary <- function(model, boot_nsim, data_subs
                     idx <- sample(n, n, replace = TRUE)
                     bdf <- data_subset[idx, ]
                     mb <- glm(
-                        cbind(resistant_count, Weight - resistant_count) ~ Consumption + PC1 + PC2 + PC3 + GDP + Year,
+                        cbind(resistant_count, Weight - resistant_count) ~ Consumption + PC1 + PC2 + PC3 +
+                            if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "" +
+                            " + GDP + Year",
                         data = bdf,
                         family = binomial(link = "logit")
                     )
@@ -497,6 +544,9 @@ extract_glm_binomial_consumption_summary <- function(model, boot_nsim, data_subs
 extract_lmer_consumption_summary <- function(model, boot_nsim, data_subset = NULL) {
     gradient <- summary(model)$coefficients["Consumption", 1]
     intercept <- summary(model)$coefficients["(Intercept)", 1]
+    
+    # NEW: Determine exactly how many fixed effects the healthy main model has
+    expected_coef_count <- length(lme4::fixef(model))
 
     if (boot_nsim > 0 && !is.null(data_subset)) {
         boot_result <- tryCatch(
@@ -505,26 +555,84 @@ extract_lmer_consumption_summary <- function(model, boot_nsim, data_subset = NUL
                 n_countries <- length(unique_countries)
                 
                 boot_values <- replicate(boot_nsim, {
-                    sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
-                    idx <- unlist(lapply(sampled_countries, function(iso) {
-                        which(data_subset$ISO3 == iso)
-                    }))
                     
-                    bdf <- data_subset[idx, ]
+                    # NEW: Retry mechanism (prevents throwing away too many iterations)
+                    max_attempts <- 10
+                    attempt <- 1
+                    valid_estimate <- NA
                     
-                    # update() safely refits the model with the new data while preserving weights
-                    mb <- update(model, data = bdf)
-                    lme4::fixef(mb)["Consumption"]
+                    while(attempt <= max_attempts && is.na(valid_estimate)) {
+                        
+                        # 1. Resample countries
+                        sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
+                        idx <- unlist(lapply(sampled_countries, function(iso) {
+                            which(data_subset$ISO3 == iso)
+                        }))
+                        
+                        bdf <- data_subset[idx, ]
+                        
+                        valid_estimate <- tryCatch({
+                            # 2. Fit the mixed model
+                            mb <- lme4::lmer(
+                                formula = formula(model),
+                                data = bdf,
+                                weights = Weight,
+                                control = lme4::lmerControl(calc.derivs = FALSE)
+                            )
+                            
+                            # NEW: Rank deficiency check for LMER
+                            # If the bootstrap model has fewer coefficients than the main model, a factor was dropped.
+                            if (length(lme4::fixef(mb)) != expected_coef_count) {
+                                stop("Rank deficient (dropped factors) in LMER fit.")
+                            }
+                            
+                            # 3. Handle Singularities
+                            if (lme4::isSingular(mb)) {
+                                mb_fallback <- lm(
+                                    formula = lme4::nobars(formula(model)), 
+                                    data = bdf,
+                                    weights = Weight
+                                )
+                                
+                                # NEW: Rank deficiency check for LM fallback
+                                # In base R 'lm', dropped factors result in NA coefficients.
+                                if (any(is.na(coef(mb_fallback)))) {
+                                    stop("Rank deficient (dropped factors) in LM fallback.")
+                                }
+                                
+                                coef(mb_fallback)["Consumption"]
+                                
+                            } else {
+                                lme4::fixef(mb)["Consumption"]
+                            }
+                            
+                        }, error = function(e) {
+                            # If an error or stop() occurs, return NA to trigger the next while-loop attempt
+                            NA 
+                        })
+                        
+                        attempt <- attempt + 1
+                    }
+                    
+                    # If it failed 10 times in a row, it returns NA and moves to the next bootstrap iteration
+                    if (is.na(valid_estimate)) {
+                        warning("Bootstrap iteration completely failed after 10 attempts due to data structure/rank deficiency.")
+                    }
+                    
+                    return(valid_estimate)
                 })
                 
+                # Clean out any persistent NAs before calculating quantiles
+                valid_boot_values <- boot_values[!is.na(boot_values)]
+
                 list(
-                    lower_ci = quantile(boot_values, 0.025, na.rm = TRUE),
-                    upper_ci = quantile(boot_values, 0.975, na.rm = TRUE),
+                    lower_ci = quantile(valid_boot_values, 0.025, na.rm = TRUE),
+                    upper_ci = quantile(valid_boot_values, 0.975, na.rm = TRUE),
                     bootstrap_values = boot_values
                 )
             },
             error = function(e) {
-                warning("Cluster bootstrap failed for LMER Consumption term; using Wald CI fallback. Error: ", conditionMessage(e))
+                warning("Cluster bootstrap failed entirely; using Wald CI fallback. Error: ", conditionMessage(e))
                 intervals <- suppressMessages(confint(model, parm = "Consumption", method = "Wald"))
                 list(
                     lower_ci = intervals[1, 1],
@@ -600,7 +708,7 @@ build_bootstrap_df <- function(label_name, label_value, bootstrap_values) {
     outdf[, c(label_name, "Gradient"), drop = FALSE]
 }
 
-fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_options = get_runtime_options(), output_prefix = "database", model_family = "gaussian") {
+fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_options = get_runtime_options(), output_prefix = "database", model_family = "gaussian", extra_pcs = FALSE) {
     gradients <- c()
     conf_intervals <- c()
     pathogens <- c()
@@ -620,7 +728,11 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
     for (antibiotic in antibiotics_to_fit) {
         for (pathogen in pathogens_to_fit) {
             data_subset <- data_[data_$Pathogen == pathogen & data_$Antibiotic == antibiotic, ]
-            vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "GDP", "Year", "Weight")
+            if (extra_pcs) {
+                vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "GDP", "Year", "Weight")
+            } else {
+                vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "GDP", "Year", "Weight")
+            }
             if (model_family == "binomial") {
                 vars_needed <- c(vars_needed, "resistant_count")
             }
@@ -632,13 +744,17 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
             }
 
             if (model_family == "gaussian") {
-                model <- fit_weighted_lm(data_subset)
+                model <- fit_weighted_lm(data_subset, extra_pcs = extra_pcs)
             } else if (model_family == "binomial") {
-                model <- fit_binomial_glm(data_subset)
+                model <- fit_binomial_glm(data_subset, extra_pcs = extra_pcs)
             }
 
             # Compute R-squared and per-variable variance explained
-            ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "GDP", "Year")
+            if (extra_pcs) {
+                ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "GDP", "Year")
+            } else {
+                ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "GDP", "Year")
+            }
             ve <- setNames(rep(NA_real_, length(ve_vars)), ve_vars)
             if (model_family == "gaussian") {
               r_sq <- summary(model)$r.squared
@@ -683,13 +799,15 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
                 summary_stats <- extract_lm_consumption_summary(
                     model,
                     runtime_options$boot_nsim,
-                    data_subset
+                    data_subset,
+                    extra_pcs = extra_pcs
                 )
             } else if (model_family == "binomial") {
                 summary_stats <- extract_glm_binomial_consumption_summary(
                     model,
                     runtime_options$boot_nsim,
-                    data_subset
+                    data_subset,
+                    extra_pcs = extra_pcs
                 )
             }
 
@@ -988,7 +1106,8 @@ fit_random_effects_models <- function(
     mode = c("class", "pathogen"),
     output_prefix = "database",
     allow_fallback = FALSE,
-    model_family = "gaussian"
+    model_family = "gaussian",
+    extra_pcs = FALSE
 ) {
     mode <- match.arg(mode)
     accumulator <- initialize_random_effects_accumulator()
@@ -1048,9 +1167,9 @@ fit_random_effects_models <- function(
         # Fit lmer if there are >2 levels. If singular/too few levels, check fallback.
         if (n_levels > 2) {
             if (model_family == "gaussian") {
-                model <- fit_random_lmer(subset_data, random_effect_var = random_effect_var)
+                model <- fit_random_lmer(subset_data, random_effect_var = random_effect_var, extra_pcs = extra_pcs)
             } else if (model_family == "binomial") {
-                model <- fit_binomial_glmer(subset_data, random_effect_var = random_effect_var)
+                model <- fit_binomial_glmer(subset_data, random_effect_var = random_effect_var, extra_pcs = extra_pcs)
             }
             log_info(capture.output(print(model)), verbose = runtime_options$verbose)
 
@@ -1058,8 +1177,8 @@ fit_random_effects_models <- function(
                 if (allow_fallback) {
                     log_info(paste("Model is singular for", singular_msg, label, "- falling back to weighted lm"), verbose = runtime_options$verbose)
                     if (model_family == "gaussian") {
-                    model <- fit_weighted_lm(subset_data)
-                    summary_stats <- extract_lm_consumption_summary(model, runtime_options$boot_nsim, subset_data)
+                        model <- fit_weighted_lm(subset_data, extra_pcs = extra_pcs)
+                        summary_stats <- extract_lm_consumption_summary(model, runtime_options$boot_nsim, subset_data)
                     } else if (model_family == "binomial") {
                         model <- fit_binomial_glm(subset_data)
                         summary_stats <- extract_glm_binomial_consumption_summary(model, runtime_options$boot_nsim, subset_data)
@@ -1075,7 +1194,7 @@ fit_random_effects_models <- function(
             if (allow_fallback) {
                 log_info(paste("Only", n_levels, "levels for", singular_msg, label, "- falling back to weighted lm"), verbose = runtime_options$verbose)
                 if (model_family == "gaussian") {
-                    model <- fit_weighted_lm(subset_data)
+                    model <- fit_weighted_lm(subset_data, extra_pcs = extra_pcs)
                     summary_stats <- extract_lm_consumption_summary(model, runtime_options$boot_nsim, subset_data)
                 } else if (model_family == "binomial") {
                     model <- fit_binomial_glm(subset_data)
@@ -1128,6 +1247,7 @@ resolve_model_jobs <- function(scenario) {
             random_pathogen_output_tag = "all",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
             data_source = "merged",
             output_prefix = "database"
         )))
@@ -1143,9 +1263,27 @@ resolve_model_jobs <- function(scenario) {
             random_pathogen_output_tag = "all_binomial",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
             data_source = "merged",
             output_prefix = "database",
             model_family = "binomial"
+        )))
+    }
+
+    if (scenario == "extra_pcs") {
+        return(list(list(
+            income = "all",
+            merged_data_path = "merged_data_new.csv",
+            merged_sums_path = "merged_data_sums_new.csv",
+            class_output_tag = "all_extra_pcs",
+            pathogen_output_tag = "extra_pcs",
+            random_pathogen_output_tag = "all_extra_pcs",
+            analysis_intent = "main_publication",
+            apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
+            data_source = "merged",
+            output_prefix = "database",
+            extra_pcs = TRUE
         )))
     }
 
@@ -1159,6 +1297,7 @@ resolve_model_jobs <- function(scenario) {
             random_pathogen_output_tag = "HIC",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
             data_source = "merged",
             output_prefix = "database"
         )))
@@ -1174,6 +1313,7 @@ resolve_model_jobs <- function(scenario) {
             random_pathogen_output_tag = "LMIC",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
             data_source = "merged",
             output_prefix = "database"
         )))
@@ -1190,6 +1330,7 @@ resolve_model_jobs <- function(scenario) {
                 random_pathogen_output_tag = "all_IQVIA",
                 analysis_intent = "main_publication",
                 apply_lagged_response = FALSE,
+                apply_lagged_consumption = FALSE,
                 data_source = "merged",
                 output_prefix = "database"
             ),
@@ -1202,6 +1343,7 @@ resolve_model_jobs <- function(scenario) {
                 random_pathogen_output_tag = "IQVIAextrapolation_all",
                 analysis_intent = "main_publication",
                 apply_lagged_response = FALSE,
+                apply_lagged_consumption = FALSE,
                 data_source = "merged",
                 output_prefix = "database"
             )
@@ -1218,6 +1360,7 @@ resolve_model_jobs <- function(scenario) {
             random_pathogen_output_tag = "hospital_to_all_filtered",
             analysis_intent = "supplementary_publication",
             apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
             data_source = "nagorsen",
             output_prefix = "Nagorsen",
                 min_entries_per_combo = 20,
@@ -1226,15 +1369,46 @@ resolve_model_jobs <- function(scenario) {
     }
 
     if (scenario == "exploratory_lagged") {
+        # Fetch the custom lag value first
+        custom_lag <- get_integer_env("AMR_LAG_N", default = 1)
+        
+        # Define the tag suffix: e.g., "lagged" for 1, or "lagged_3y" for 3
+        tag_suffix <- if (custom_lag == 1) "lagged" else paste0("lagged_", custom_lag, "y")
+
         return(list(list(
             income = "all",
             merged_data_path = "merged_data_new.csv",
             merged_sums_path = "merged_data_sums_new.csv",
-            class_output_tag = "all_lagged",
-            pathogen_output_tag = "lagged",
-            random_pathogen_output_tag = "all_lagged",
+            class_output_tag = paste0("all_", tag_suffix),
+            pathogen_output_tag = tag_suffix,
+            random_pathogen_output_tag = paste0("all_", tag_suffix),
             analysis_intent = "exploratory_only",
             apply_lagged_response = TRUE,
+            apply_lagged_consumption = FALSE,
+            lag_n = custom_lag,
+            data_source = "merged",
+            output_prefix = "database"
+        )))
+    }
+
+    if (scenario == "consumption_lagged") {
+        # Fetch the custom lag value first
+        custom_lag <- get_integer_env("AMR_LAG_N", default = 1)
+        
+        # Define the tag suffix: e.g., "lagged" for 1, or "lagged_3y" for 3
+        tag_suffix <- if (custom_lag == 1) "clagged" else paste0("clagged_", custom_lag, "y")
+
+        return(list(list(
+            income = "all",
+            merged_data_path = "merged_data_new.csv",
+            merged_sums_path = "merged_data_sums_new.csv",
+            class_output_tag = paste0("all_", tag_suffix),
+            pathogen_output_tag = tag_suffix,
+            random_pathogen_output_tag = paste0("all_", tag_suffix),
+            analysis_intent = "exploratory_only",
+            apply_lagged_response = FALSE,
+            apply_lagged_consumption = TRUE,
+            lag_n = custom_lag,
             data_source = "merged",
             output_prefix = "database"
         )))
@@ -1263,6 +1437,7 @@ resolve_model_jobs <- function(scenario) {
             random_pathogen_output_tag = NA_character_,  # not used for permutation
             analysis_intent = "permutation",
             apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
             data_source = "merged",
             output_prefix = "database",
             permutation_class = perm_class
@@ -1313,13 +1488,27 @@ run_class_model_pipeline <- function(job) {
     )
 
     if (isTRUE(job$apply_lagged_response)) {
-        # Exploratory-only pathway: lagged response is not part of the main or supplementary publication analyses.
+        # Retrieve the custom lag value, defaulting to 1
+        custom_lag <- job_or_default(job, "lag_n", 1) 
+        
         data <- data %>%
             group_by(ISO3, Antibiotic, Pathogen) %>%
             arrange(Year) %>%
-            mutate(Resistance = (Resistance - lag(Resistance)) / lag(Resistance)) %>%
+            mutate(Resistance = (Resistance - lag(Resistance, n = custom_lag)) / lag(Resistance, n = custom_lag)) %>%
             ungroup() %>%
             filter(is.finite(Resistance))
+    }
+
+    if (isTRUE(job$apply_lagged_consumption)) {
+        # Retrieve the custom lag value, defaulting to 1
+        custom_lag <- job_or_default(job, "lag_n", 1) 
+        
+        data <- data %>%
+            group_by(ISO3, Antibiotic, Pathogen) %>%
+            arrange(Year) %>%
+            mutate(Consumption = lag(Consumption, n = custom_lag)) %>%
+            ungroup() %>%
+            filter(is.finite(Consumption))
     }
 
     # Permutation: shuffle Consumption within each country-year for one antibiotic class only.
@@ -1344,16 +1533,18 @@ run_class_model_pipeline <- function(job) {
         verbose = runtime_options$verbose
     )
 
+    is_extra_pcs <- isTRUE(job$extra_pcs) # Safely handles NULLs
+
     fit_combined_pathogen_drug_lm(
         data_,
         output_tag = job$pathogen_output_tag,
         runtime_options = runtime_options,
         output_prefix = job$output_prefix,
-        model_family = model_family
+        model_family = model_family,
+        extra_pcs = is_extra_pcs
     )
 
-    # Determine fallback based on whether this is an income-stratified job
-    allow_fallback <- job$income != "all"
+    allow_fallback <- TRUE
 
     # Class and random-effects models are not needed for permutation runs.
     if (!identical(job$analysis_intent, "permutation")) {
@@ -1364,7 +1555,8 @@ run_class_model_pipeline <- function(job) {
             mode = "class",
             output_prefix = job$output_prefix,
             allow_fallback = allow_fallback,
-            model_family = model_family
+            model_family = model_family,
+            extra_pcs = is_extra_pcs
         )
         fit_random_effects_models(
             data_,
@@ -1373,7 +1565,8 @@ run_class_model_pipeline <- function(job) {
             mode = "pathogen",
             output_prefix = job$output_prefix,
             allow_fallback = allow_fallback,
-            model_family = model_family
+            model_family = model_family,
+            extra_pcs = is_extra_pcs
         )
     }
 }
@@ -1390,6 +1583,7 @@ if (length(jobs) == 0) {
             ", income=", job$income,
             ", analysis_intent=", job$analysis_intent,
             ", apply_lagged_response=", job$apply_lagged_response,
+            ", apply_lagged_consumption=", job$apply_lagged_consumption,
             ", class_output_tag=", job$class_output_tag,
             ", pathogen_output_tag=", job$pathogen_output_tag,
             ", random_pathogen_output_tag=", job$random_pathogen_output_tag

@@ -28,6 +28,36 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
       class_tag = "LMIC",
       random_pathogen_tag = "LMIC"
     )
+  } else if (scenario == "exploratory_lagged") {
+    # Match the custom lag parsing from the model script
+    custom_lag <- as.integer(Sys.getenv("AMR_LAG_N", unset = "1"))
+    if (is.na(custom_lag)) custom_lag <- 1
+    
+    tag_suffix <- if (custom_lag == 1) "lagged" else paste0("lagged_", custom_lag, "y")
+    
+    plot_tags <- list(
+      pathogen_tag = tag_suffix,
+      class_tag = paste0("all_", tag_suffix),
+      random_pathogen_tag = paste0("all_", tag_suffix)
+    )
+  } else if (scenario == "consumption_lagged") {
+    # Match the custom lag parsing from the model script
+    custom_lag <- as.integer(Sys.getenv("AMR_LAG_N", unset = "1"))
+    if (is.na(custom_lag)) custom_lag <- 1
+    
+    tag_suffix <- if (custom_lag == 1) "clagged" else paste0("clagged_", custom_lag, "y")
+    
+    plot_tags <- list(
+      pathogen_tag = tag_suffix,
+      class_tag = paste0("all_", tag_suffix),
+      random_pathogen_tag = paste0("all_", tag_suffix)
+    )
+  } else if (scenario == "extra_pcs") {
+    plot_tags <- list(
+      pathogen_tag = "extra_pcs",
+      class_tag = "all_extra_pcs",
+      random_pathogen_tag = "all_extra_pcs"
+    )
   }
 
   fig1_pathogen_input <- paste0(
@@ -66,7 +96,8 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
   message("[generate_figures] Figure2 pathogen input: ", fig2_pathogen_input)
   message("[generate_figures] Figure2 pathogen bootstrap input: ", fig2_pathogen_bootstrap_input)
 
-  if (scenario %in% c("main", "main_binomial", "hic", "lmic")) {
+  # Added exploratory_lagged to require the correct inputs
+  if (scenario %in% c("main", "main_binomial", "hic", "lmic", "exploratory_lagged", "consumption_lagged")) {
     require_inputs(c(
       fig1_pathogen_input,
       fig1_class_gradients_input,
@@ -94,7 +125,8 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
   dir.create(AMR_CONFIG$output_dirs$manuscript, recursive = TRUE, showWarnings = FALSE)
   dir.create(AMR_CONFIG$output_dirs$slides, recursive = TRUE, showWarnings = FALSE)
 
-  if (scenario %in% c("main", "main_binomial", "hic", "lmic", "hospital_nagorsen")) {
+  # Added exploratory_lagged to actually run the figure module
+  if (scenario %in% c("main", "main_binomial", "hic", "lmic", "hospital_nagorsen", "exploratory_lagged", "consumption_lagged")) {
     message("[generate_figures] Running canonical figure module...")
     old_options <- options(
       amr_plot_pathogen_tag = plot_tags$pathogen_tag,

@@ -90,41 +90,47 @@ pca.results <- lapply(imputed.list, prcomp, scale. = TRUE)
 screeplot(pca.results[[1]], main = "Screeplot of First Imputed Dataset", type = "lines")
 summary(pca.results[[1]]); pca.results[[1]]$x
 
-pc.scores <- pca.results[[1]]$x[, 1:3]  # Get PC1 to PC3
-colnames(pc.scores) <- c("PC1", "PC2", "PC3")
+pc.scores <- pca.results[[1]]$x[, 1:10]  # Get PC1 to PC10
+colnames(pc.scores) <- c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10")
 df.pc <- bind_cols(df.pca.ready[, c("Country", "Year","GDP")], as.tibble(pc.scores))
+source("utils.R")
+# rename country using iso3_ihme_mapping
+df.pc$ISO3 <- iso3_ihme_mapping$iso3[match(df.pc$Country, iso3_ihme_mapping$country_name)]
+write.csv(df.pc, "Chungman/pcato10.csv", row.names = FALSE)
 
-# what proportion of variance is explained by PC1, PC2, and PC3?
-variance_explained <- summary(pca.results[[1]])$importance[2, 1:3]  # Proportion of variance explained by PC1, PC2, and PC3
-print(sum(variance_explained))
 
-# Create a dataframe with PC, variance explained, and top 3 variables
-# with loadings
-variance_explained <- summary(pca.results[[1]])$importance[2, 1:10]
-cum_variance_explained <- 
-  cumsum(summary(pca.results[[1]])$importance[2, 1:10])
-top_vars_data <- lapply(1:10, function(i) {
-  pc_loadings <- pca.results[[1]]$rotation[, i]
-  top_indices <- order(abs(pc_loadings), decreasing = TRUE)[1:3]
-  top_var_names <- names(pc_loadings)[top_indices]
-  top_var_loadings <- pc_loadings[top_indices]
 
-  data.frame(
-    PC = paste0("PC", i),
-    Variance_Explained = round(variance_explained[i], 4),
-    Cumulative_Variance = round(cum_variance_explained[i], 4),
-    Var1 = paste0(top_var_names[1], " (", 
-                  round(top_var_loadings[1], 3), ")"),
-    Var2 = paste0(top_var_names[2], " (", 
-                  round(top_var_loadings[2], 3), ")"),
-    Var3 = paste0(top_var_names[3], " (", 
-                  round(top_var_loadings[3], 3), ")")
-  )
-})
-top_vars_df <- do.call(rbind, top_vars_data)
-top_vars_df[] <- lapply(top_vars_df, gsub, pattern = '"', replacement = "")
-write.table(top_vars_df, file = "Outputs/pca_tsv.txt", 
-            row.names = FALSE, sep = "\t")
+# # what proportion of variance is explained by PC1, PC2, and PC3?
+# variance_explained <- summary(pca.results[[1]])$importance[2, 1:3]  # Proportion of variance explained by PC1, PC2, and PC3
+# print(sum(variance_explained))
+
+# # Create a dataframe with PC, variance explained, and top 3 variables
+# # with loadings
+# variance_explained <- summary(pca.results[[1]])$importance[2, 1:10]
+# cum_variance_explained <- 
+#   cumsum(summary(pca.results[[1]])$importance[2, 1:10])
+# top_vars_data <- lapply(1:10, function(i) {
+#   pc_loadings <- pca.results[[1]]$rotation[, i]
+#   top_indices <- order(abs(pc_loadings), decreasing = TRUE)[1:3]
+#   top_var_names <- names(pc_loadings)[top_indices]
+#   top_var_loadings <- pc_loadings[top_indices]
+
+#   data.frame(
+#     PC = paste0("PC", i),
+#     Variance_Explained = round(variance_explained[i], 4),
+#     Cumulative_Variance = round(cum_variance_explained[i], 4),
+#     Var1 = paste0(top_var_names[1], " (", 
+#                   round(top_var_loadings[1], 3), ")"),
+#     Var2 = paste0(top_var_names[2], " (", 
+#                   round(top_var_loadings[2], 3), ")"),
+#     Var3 = paste0(top_var_names[3], " (", 
+#                   round(top_var_loadings[3], 3), ")")
+#   )
+# })
+# top_vars_df <- do.call(rbind, top_vars_data)
+# top_vars_df[] <- lapply(top_vars_df, gsub, pattern = '"', replacement = "")
+# write.table(top_vars_df, file = "Outputs/pca_tsv.txt", 
+#             row.names = FALSE, sep = "\t")
 
 # str(df.pc)
 # par(mfrow=c(2,1))

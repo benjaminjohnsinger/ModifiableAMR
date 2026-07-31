@@ -3,7 +3,7 @@ source("config.R")
 run_fit_models_stage <- function(scenario = get_amr_scenario()) {
   message("[fit_models] scenario: ", scenario)
 
-  if (scenario %in% c("main", "hic", "lmic", "main_binomial")) {
+  if (scenario %in% c("main", "hic", "lmic", "main_binomial", "exploratory_lagged", "consumption_lagged", "extra_pcs")) {
     require_input("merged_data_N_PC3_GDP.csv", stage = "fit_models")
   } else if (scenario == "raw_iqvia") {
     require_input("merged_data_N_PC3_GDP_IQVIA.csv", stage = "fit_models")
@@ -20,7 +20,7 @@ run_fit_models_stage <- function(scenario = get_amr_scenario()) {
   }
 
   if (scenario %in% c("main", "main_binomial", "hic", "lmic", "raw_iqvia", "hospital_nagorsen",
-                       "exploratory_lagged", "permutation")) {
+                       "exploratory_lagged", "consumption_lagged", "extra_pcs", "permutation")) {
     message("[fit_models] Running linear model script...")
     source(AMR_CONFIG$canonical$model_script)
   } else {

@@ -7,7 +7,7 @@ source("utils.R")
 
 prepare_nagorsen_hospital_regression_data <- function(
     nagorsen_path = "Nagorsen_clean.csv",
-    pca_path = "Chungman/Chungman_pca_renamed.csv",
+    pca_path = "Chungman/pcato10.csv",
     output_path = "merged_data_Nagorsen_hospital_to_all_filtered.csv",
     sums_output_path = "merged_data_sums_Nagorsen_hospital_to_all_filtered.csv",
     min_entries_per_combo = 20
@@ -53,6 +53,13 @@ prepare_nagorsen_hospital_regression_data <- function(
     data$PC1 <- df_pc$PC1[idx]
     data$PC2 <- df_pc$PC2[idx]
     data$PC3 <- df_pc$PC3[idx]
+    data$PC4 <- df_pc$PC4[idx]
+    data$PC5 <- df_pc$PC5[idx]
+    data$PC6 <- df_pc$PC6[idx]
+    data$PC7 <- df_pc$PC7[idx]
+    data$PC8 <- df_pc$PC8[idx]
+    data$PC9 <- df_pc$PC9[idx]
+    data$PC10 <- df_pc$PC10[idx]
     data$GDP <- df_pc$GDP[idx]
 
     data <- data %>%
@@ -67,6 +74,13 @@ prepare_nagorsen_hospital_regression_data <- function(
             PC1 = PC1,
             PC2 = PC2,
             PC3 = PC3,
+            PC4 = PC4,
+            PC5 = PC5,
+            PC6 = PC6,
+            PC7 = PC7,
+            PC8 = PC8,
+            PC9 = PC9,
+            PC10 = PC10,
             GDP = GDP,
             Year = end_year
         )
@@ -95,7 +109,7 @@ prepare_main_regression_data <- function(
     atlas2_path = "ATLAS_more/ATLAS_more_renamed.csv",
     atlase_path = "ATLAS_Enterococcus/ATLAS_Enterococcus_renamed.csv",
     consumption_path = "antibiotic_consumption_by_ATC3.csv",
-    pca_path = "Chungman/Chungman_pca_renamed.csv",
+    pca_path = "Chungman/pcato10.csv",
     no_covariates_path = "merged_data_new_no_covariates.csv",
     output_path = "merged_data_new.csv",
     sums_output_path = "merged_data_sums_new.csv",
@@ -188,6 +202,13 @@ prepare_main_regression_data <- function(
   merged_data$PC1 <- df.pc$PC1[idx_pca]
   merged_data$PC2 <- df.pc$PC2[idx_pca]
   merged_data$PC3 <- df.pc$PC3[idx_pca]
+  merged_data$PC4 <- df.pc$PC4[idx_pca]
+  merged_data$PC5 <- df.pc$PC5[idx_pca]
+  merged_data$PC6 <- df.pc$PC6[idx_pca]
+  merged_data$PC7 <- df.pc$PC7[idx_pca]
+  merged_data$PC8 <- df.pc$PC8[idx_pca]
+  merged_data$PC9 <- df.pc$PC9[idx_pca]
+  merged_data$PC10 <- df.pc$PC10[idx_pca]
   merged_data$GDP <- df.pc$GDP[idx_pca]
   merged_data$key_pca <- NULL  # Clean up temporary key
   df.pc$key_pca <- NULL
@@ -207,6 +228,13 @@ prepare_main_regression_data <- function(
       PC1 = mean(PC1, na.rm = TRUE),
       PC2 = mean(PC2, na.rm = TRUE),
       PC3 = mean(PC3, na.rm = TRUE),
+      PC4 = mean(PC4, na.rm = TRUE),
+      PC5 = mean(PC5, na.rm = TRUE),
+      PC6 = mean(PC6, na.rm = TRUE),
+      PC7 = mean(PC7, na.rm = TRUE),
+      PC8 = mean(PC8, na.rm = TRUE),
+      PC9 = mean(PC9, na.rm = TRUE),
+      PC10 = mean(PC10, na.rm = TRUE),
       GDP = mean(GDP, na.rm = TRUE)
     ) %>%
     ungroup()
