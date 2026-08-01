@@ -3,6 +3,8 @@
 library(tidyverse)
 library(dplyr)
 library(glmnet)
+library(skedastic)
+library(MuMIn)
 source("utils.R")
 source("config.R")
 
@@ -49,6 +51,42 @@ get_runtime_options <- function() {
     )
 }
 
+pool_rubins_rules <- function(estimates, std_errors) {
+    # Remove any NAs caused by complete model failures
+    valid_idx <- !is.na(estimates) & !is.na(std_errors)
+    estimates <- estimates[valid_idx]
+    std_errors <- std_errors[valid_idx]
+    m <- length(estimates)
+    
+    if (m == 0) {
+        return(list(gradient = NA_real_, lower_ci = NA_real_, upper_ci = NA_real_, se = NA_real_))
+    }
+    
+    # Pooled point estimate
+    pooled_est <- mean(estimates)
+    
+    # Variances
+    vw <- mean(std_errors^2)
+    vb <- var(estimates)
+    
+    # Handle single successful model edge case
+    if (is.na(vb)) vb <- 0 
+    
+    vt <- vw + (1 + (1/m)) * vb
+    pooled_se <- sqrt(vt)
+    
+    # Calculate 95% CIs
+    lower_ci <- pooled_est - (1.96 * pooled_se)
+    upper_ci <- pooled_est + (1.96 * pooled_se)
+    
+    list(
+        gradient = pooled_est,
+        lower_ci = lower_ci,
+        upper_ci = upper_ci,
+        se = pooled_se
+    )
+}
+
 limit_for_smoke_mode <- function(df, runtime_options) {
     if (!isTRUE(runtime_options$smoke_mode)) {
         return(df)
@@ -92,7 +130,7 @@ map_nagorsen_to_atc_class <- function(class_vector) {
 load_nagorsen_model_inputs <- function(
     nagorsen_path = "Nagorsen_clean.csv",
     pca_path = "Chungman/Chungman_pca_renamed.csv",
-    prepared_data_path = "merged_data_Nagorsen_hospital_to_all_filtered.csv",
+    prepared_data_path = "summed_data_Nagorsen_hospital_to_all_filtered.csv",
     min_entries_per_combo = 20
 ) {
     runtime_options <- get_runtime_options()
@@ -209,15 +247,15 @@ job_or_default <- function(job, key, default_value) {
     default_value
 }
 load_model_inputs <- function(
-    merged_data_path = "merged_data_new.csv",
-    merged_sums_path = "merged_data_sums_new.csv",
+    summed_data_path = "summed_data_new.csv",
+    merged_sums_path = "summed_data_sums_new.csv",
     min_entries_per_combo = 10,
     min_isolates_per_combo = 100
 ) {
-    data <- read.csv(merged_data_path)
+    data <- read.csv(summed_data_path)
 
     runtime_options <- get_runtime_options()
-    log_info("[ddd-linear-model] Input file: ", merged_data_path, verbose = runtime_options$verbose)
+    log_info("[ddd-linear-model] Input file: ", summed_data_path, verbose = runtime_options$verbose)
     log_info("[ddd-linear-model] Unique ISO3 count: ", length(table(data$ISO3)), verbose = runtime_options$verbose)
     log_info("[ddd-linear-model] Max rows for one ISO3: ", max(table(data$ISO3)), verbose = runtime_options$verbose)
     log_info("[ddd-linear-model] Years included: ", paste(sort(unique(data$Year)), collapse = ", "), verbose = runtime_options$verbose)
@@ -243,10 +281,10 @@ load_model_inputs <- function(
     pathogen_drug_to_remove <- names(pathogen_drug_counts[pathogen_drug_counts <= min_entries_per_combo])
     data <- data[!paste(data$Pathogen, data$Antibiotic) %in% pathogen_drug_to_remove, ]
 
-    merged_data_sums <- read.csv(merged_sums_path) %>%
+    summed_data_sums <- read.csv(merged_sums_path) %>%
         rename(Antibiotic = ATC.Class)
 
-    pathogen_drug_counts <- merged_data_sums %>%
+    pathogen_drug_counts <- summed_data_sums %>%
         group_by(Pathogen, Antibiotic) %>%
         summarise(Total.Isolates = sum(Total.Isolates, na.rm = TRUE), .groups = "drop") %>%
         filter(Total.Isolates < min_isolates_per_combo) %>%
@@ -268,13 +306,13 @@ load_model_inputs <- function(
     log_info("[ddd-linear-model] Antibiotic classes retained: ", length(unique(data$Antibiotic)), verbose = runtime_options$verbose)
     log_info("[ddd-linear-model] Pathogens retained: ", length(unique(data$Pathogen)), verbose = runtime_options$verbose)
 
-    countries_per_pathogen <- data %>%
-        group_by(Pathogen) %>%
-        summarise(Countries = paste(unique(ISO3), collapse = ", "), .groups = "drop")
+    # countries_per_pathogen <- data %>%
+    #     group_by(Pathogen) %>%
+    #     summarise(Countries = paste(unique(ISO3), collapse = ", "), .groups = "drop")
 
-    for (i in seq_len(nrow(countries_per_pathogen))) {
-        log_info(paste0(countries_per_pathogen$Pathogen[i], ": ", countries_per_pathogen$Countries[i]), verbose = runtime_options$verbose)
-    }
+    # for (i in seq_len(nrow(countries_per_pathogen))) {
+    #     log_info(paste0(countries_per_pathogen$Pathogen[i], ": ", countries_per_pathogen$Countries[i]), verbose = runtime_options$verbose)
+    # }
 
     data$lending_group <- iso3_ihme_mapping$lending_group[match(data$ISO3, iso3_ihme_mapping$iso3)]
 
@@ -392,17 +430,36 @@ build_output_path <- function(prefix, output_tag) {
 }
 
 write_random_effects_outputs <- function(
-    gradient_prefix,
-    lower_prefix,
-    upper_prefix,
-    bootstrap_prefix,
-    output_tag,
-    gradients,
-    lower_ci,
-    upper_ci,
-    bootstraps
+    gradient_prefix, lower_prefix, upper_prefix, bootstrap_prefix, output_tag,
+    gradients, lower_ci, upper_ci, bootstraps,
+    r_squareds = NULL, white_tests = NULL, rmses = NULL, aics = NULL, bics = NULL, vif_list = NULL
 ) {
-    write.csv(gradients, build_output_path(gradient_prefix, output_tag), row.names = TRUE)
+    # If the new metrics are provided, attach them to the gradients dataframe
+    if (!is.null(r_squareds)) {
+        gradients_df <- data.frame(
+            Gradient = gradients,
+            R_squared = r_squareds,
+            White_test_p_value = white_tests,
+            RMSE = rmses,
+            AIC = aics,
+            BIC = bics
+        )
+        
+        # Format VIFs into a dataframe if available
+        if (!is.null(vif_list) && length(vif_list) > 0) {
+            vif_df <- do.call(rbind, lapply(vif_list, function(x) {
+                if (is.null(x) || any(is.na(x))) return(data.frame(VIF = NA))
+                as.data.frame(t(x))
+            }))
+            colnames(vif_df) <- paste0("VIF.", colnames(vif_df))
+            gradients_df <- cbind(gradients_df, vif_df)
+        }
+        
+        write.csv(gradients_df, build_output_path(gradient_prefix, output_tag), row.names = TRUE)
+    } else {
+        write.csv(gradients, build_output_path(gradient_prefix, output_tag), row.names = TRUE)
+    }
+    
     write.csv(lower_ci, build_output_path(lower_prefix, output_tag), row.names = TRUE)
     write.csv(upper_ci, build_output_path(upper_prefix, output_tag), row.names = TRUE)
     write.csv(bootstraps, build_output_path(bootstrap_prefix, output_tag), row.names = TRUE)
@@ -415,18 +472,19 @@ initialize_random_effects_accumulator <- function() {
         intercepts = numeric(),
         lower_ci = numeric(),
         upper_ci = numeric(),
-        bootstraps = data.frame()
+        bootstraps = data.frame(),
+        r_squareds = numeric(),
+        white_tests = numeric(),
+        rmses = numeric(),
+        aics = numeric(),
+        bics = numeric(),
+        vif_list = list()
     )
 }
 
 append_random_effects_result <- function(
-    accumulator,
-    label,
-    gradient,
-    intercept,
-    lower_ci,
-    upper_ci,
-    bootstrap_df
+    accumulator, label, gradient, intercept, lower_ci, upper_ci, bootstrap_df,
+    r_sq, white_p, rmse, aic, bic, vifs
 ) {
     accumulator$labels <- c(accumulator$labels, label)
     accumulator$gradients <- c(accumulator$gradients, gradient)
@@ -434,7 +492,30 @@ append_random_effects_result <- function(
     accumulator$lower_ci <- c(accumulator$lower_ci, lower_ci)
     accumulator$upper_ci <- c(accumulator$upper_ci, upper_ci)
     accumulator$bootstraps <- rbind(accumulator$bootstraps, bootstrap_df)
+    
+    # New metrics
+    accumulator$r_squareds <- c(accumulator$r_squareds, r_sq)
+    accumulator$white_tests <- c(accumulator$white_tests, white_p)
+    accumulator$rmses <- c(accumulator$rmses, rmse)
+    accumulator$aics <- c(accumulator$aics, aic)
+    accumulator$bics <- c(accumulator$bics, bic)
+    accumulator$vif_list[[length(accumulator$vif_list) + 1]] <- vifs
+    
     accumulator
+}
+
+format_combo_results <- function(named_vector, value_col_name) {
+    # Convert the named vector into a clean data frame
+    df <- data.frame(
+        Combo_Label = names(named_vector),
+        Value = unname(named_vector)
+    )
+    # Rename the value column to whatever is appropriate (Gradient, Lower_CI, etc.)
+    colnames(df)[2] <- value_col_name
+    
+    # Split the Combo_Label into Pathogen and Antibiotic columns
+    df %>%
+        tidyr::separate(Combo_Label, into = c("Pathogen", "Antibiotic"), sep = "___")
 }
 
 extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL, extra_pcs = FALSE) {
@@ -455,16 +536,13 @@ extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL,
                     
                     bdf <- data_subset[idx, ]
                     mb <- lm(
-                        Resistance ~ Consumption + PC1 + PC2 + PC3 + 
-                            if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "" +
-                            " + GDP + Year",
+                        formula = get_fixed_effects_formula(extra_pcs = extra_pcs),
                         data = bdf,
                         weights = Weight
                     )
                     summary(mb)$coefficients["Consumption", 1]
                 })
                 
-                # FIX: Calculate quantiles from the bootstrap values
                 list(
                     lower_ci = quantile(boot_values, 0.025, na.rm = TRUE),
                     upper_ci = quantile(boot_values, 0.975, na.rm = TRUE),
@@ -491,11 +569,21 @@ extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL,
         bootstrap_values <- gradient
     }
 
+    # Inside extract_lm_consumption_summary and extract_lmer_consumption_summary...
+    # Calculate SE from bootstraps, fallback to Wald SE if bootstraps failed/0
+    if (boot_nsim > 0 && !is.null(data_subset) && length(bootstrap_values) > 1) {
+        calc_se <- sd(bootstrap_values, na.rm = TRUE)
+    } else {
+        # Fallback to analytic standard error
+        calc_se <- summary(model)$coefficients["Consumption", 2] 
+    }
+
     list(
         gradient = gradient,
         intercept = intercept,
         lower_ci = lower_ci,
         upper_ci = upper_ci,
+        se = calc_se, # NEW: Standard error for MI
         bootstrap_values = bootstrap_values
     )
 }
@@ -517,9 +605,7 @@ extract_glm_binomial_consumption_summary <- function(model, boot_nsim, data_subs
                     idx <- sample(n, n, replace = TRUE)
                     bdf <- data_subset[idx, ]
                     mb <- glm(
-                        cbind(resistant_count, Weight - resistant_count) ~ Consumption + PC1 + PC2 + PC3 +
-                            if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "" +
-                            " + GDP + Year",
+                        formula = get_fixed_effects_formula(extra_pcs = extra_pcs),
                         data = bdf,
                         family = binomial(link = "logit")
                     )
@@ -651,11 +737,20 @@ extract_lmer_consumption_summary <- function(model, boot_nsim, data_subset = NUL
         bootstrap_values <- gradient
     }
 
+    # Calculate SE from bootstraps, fallback to Wald SE if bootstraps failed/0
+    if (boot_nsim > 0 && !is.null(data_subset) && length(bootstrap_values) > 1) {
+        calc_se <- sd(bootstrap_values, na.rm = TRUE)
+    } else {
+        # Fallback to analytic standard error
+        calc_se <- summary(model)$coefficients["Consumption", 2] 
+    }
+
     list(
         gradient = gradient,
         intercept = intercept,
         lower_ci = lower_ci,
         upper_ci = upper_ci,
+        se = calc_se, # NEW: Standard error for MI
         bootstrap_values = bootstrap_values
     )
 }
@@ -716,6 +811,11 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
     bootstraps <- data.frame()
     r_squareds <- c()
     variation_explained_list <- list()
+    vif_list <- list()
+    white_tests <- c()
+    RMSEs <- c()
+    AICs <- c()
+    BICs <- c()
 
     antibiotics_to_fit <- sort(unique(data_$Antibiotic))
     pathogens_to_fit <- sort(unique(data_$Pathogen))
@@ -749,6 +849,19 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
                 model <- fit_binomial_glm(data_subset, extra_pcs = extra_pcs)
             }
 
+            # calculate White test for heteroskedasticity
+            white_test <- white(model)$p.value
+            RMSE <- sqrt(mean(model$residuals^2))
+            AIC <- AIC(model)
+            BIC <- BIC(model)
+
+            # save a plot of residuals
+            plot_path <- paste0("residuals_", antibiotic, "_", pathogen, ".png")
+            png(plot_path)
+            plot(model$residuals, main = paste("Residuals for", antibiotic, "and", pathogen))
+            abline(h = 0, col = "red")
+            dev.off()
+
             # Compute R-squared and per-variable variance explained
             if (extra_pcs) {
                 ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "GDP", "Year")
@@ -756,6 +869,49 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
                 ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "GDP", "Year")
             }
             ve <- setNames(rep(NA_real_, length(ve_vars)), ve_vars)
+            vifs <- setNames(rep(NA_real_, length(ve_vars)), ve_vars)
+            
+            tryCatch({
+                # 1. Check if the model dropped any variables (NA coefficients)
+                na_coefs <- names(coef(model))[is.na(coef(model))]
+                
+                if (length(na_coefs) > 0) {
+                    # Map the dropped coefficients back to the original variable names
+                    # (e.g., "Year2018" matches back to "Year")
+                    aliased_vars <- ve_vars[sapply(ve_vars, function(v) any(grepl(v, na_coefs)))]
+                    
+                    if (length(aliased_vars) > 0) {
+                        # Create a safe list of variables, removing the aliased ones
+                        safe_vars <- setdiff(ve_vars, aliased_vars)
+                        
+                        # Refit a temporary model just for VIF calculation
+                        if (model_family == "gaussian") {
+                            safe_formula <- as.formula(paste("Resistance ~", paste(safe_vars, collapse = " + ")))
+                            safe_model <- lm(safe_formula, data = data_subset, weights = data_subset$Weight)
+                        } else if (model_family == "binomial") {
+                            safe_formula <- as.formula(paste("cbind(resistant_count, Weight - resistant_count) ~", 
+                                                             paste(safe_vars, collapse = " + ")))
+                            safe_model <- glm(safe_formula, data = data_subset, family = binomial(link = "logit"))
+                        }
+                        calc_vifs <- car::vif(safe_model)
+                    } else {
+                        calc_vifs <- car::vif(model)
+                    }
+                } else {
+                    # No aliased coefficients, calculate normally
+                    calc_vifs <- car::vif(model)
+                }
+                
+                # Safely map calculated VIFs into our array
+                matching_vars <- intersect(names(calc_vifs), names(vifs))
+                vifs[matching_vars] <- calc_vifs[matching_vars]
+                
+            }, error = function(e) {
+                # If VIF still fails, print a warning to the console but KEEP RUNNING the loop.
+                # The VIFs for this specific model will just remain as NAs.
+                message("Notice: VIF calculation skipped for ", antibiotic, " / ", pathogen, " - ", e$message)
+            })
+
             if (model_family == "gaussian") {
               r_sq <- summary(model)$r.squared
               for (ve_var in ve_vars) {
@@ -818,6 +974,11 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
             abs <- c(abs, antibiotic)
             r_squareds <- c(r_squareds, r_sq)
             variation_explained_list[[length(variation_explained_list) + 1]] <- ve
+            vif_list[[length(vif_list) + 1]] <- vifs
+            white_tests <- c(white_tests, white_test)
+            RMSEs <- c(RMSEs, RMSE)
+            AICs <- c(AICs, AIC)
+            BICs <- c(BICs, BIC)
 
             outdf <- data.frame(
                 Pathogen = pathogen,
@@ -836,15 +997,21 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
     conf_intervals <- matrix(conf_intervals, nrow = length(gradients), ncol = 2, byrow = TRUE)
     variation_explained_df <- do.call(rbind, lapply(variation_explained_list, function(x) as.data.frame(t(x))))
     colnames(variation_explained_df) <- paste0("Variation_Explained.", colnames(variation_explained_df))
+    vif_df <- do.call(rbind, lapply(vif_list, function(x) as.data.frame(t(x))))
+    colnames(vif_df) <- paste0("VIF.", colnames(vif_df))
     results <- data.frame(
         Antibiotic = abs,
         Pathogen = pathogens,
         Response = gradients,
         Lower_CI = conf_intervals[, 1],
         Upper_CI = conf_intervals[, 2],
-        R_squared = r_squareds
+        R_squared = r_squareds,
+        White_test_p_value = white_tests,
+        RMSE = RMSEs,
+        AIC = AICs,
+        BIC = BICs
     )
-    results <- cbind(results, variation_explained_df)
+    results <- cbind(results, variation_explained_df, vif_df)
 
     gradient_prefix <- if (identical(output_prefix, "Nagorsen")) {
         "Nagorsen_gradients_pathogen_ATC3_PCA_canonical"
@@ -859,6 +1026,74 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
 
     write.csv(results, build_output_path(gradient_prefix, output_tag), row.names = FALSE)
     write.csv(bootstraps, build_output_path(bootstrap_prefix, output_tag), row.names = FALSE)
+}
+
+fit_combined_pathogen_drug_mi_lm <- function(mi_datasets, output_tag = "lagged", runtime_options = get_runtime_options(), output_prefix = "database", model_family = "gaussian", extra_pcs = FALSE) {
+    
+    gradients <- c()
+    conf_intervals <- c()
+    pathogens <- c()
+    abs <- c()
+    
+    # Use the first dataset to define the combinations to fit
+    template_data <- mi_datasets[[1]]
+    antibiotics_to_fit <- sort(unique(template_data$Antibiotic))
+    pathogens_to_fit <- sort(unique(template_data$Pathogen))
+    
+    for (antibiotic in antibiotics_to_fit) {
+        for (pathogen in pathogens_to_fit) {
+            
+            mi_estimates <- numeric(length(mi_datasets))
+            mi_ses <- numeric(length(mi_datasets))
+            
+            for (i in seq_along(mi_datasets)) {
+                data_subset <- mi_datasets[[i]][mi_datasets[[i]]$Pathogen == pathogen & mi_datasets[[i]]$Antibiotic == antibiotic, ]
+                
+                if (nrow(data_subset) <= 1) {
+                    mi_estimates[i] <- NA
+                    mi_ses[i] <- NA
+                    next
+                }
+                
+                # Fit the model on this specific imputation
+                model <- fit_weighted_lm(data_subset, extra_pcs = extra_pcs)
+                
+                # Extract gradient and bootstrap standard error
+                summary_stats <- extract_lm_consumption_summary(
+                    model,
+                    runtime_options$boot_nsim, # This is now hardcoded to 100
+                    data_subset,
+                    extra_pcs = extra_pcs
+                )
+                
+                mi_estimates[i] <- summary_stats$gradient
+                mi_ses[i] <- summary_stats$se
+            }
+            
+            # Pool the 20 results using Rubin's Rules
+            pooled_results <- pool_rubins_rules(mi_estimates, mi_ses)
+            
+            # Skip if pooling failed (e.g., all models crashed)
+            if (is.na(pooled_results$gradient)) next
+            
+            gradients <- c(gradients, pooled_results$gradient)
+            conf_intervals <- c(conf_intervals, pooled_results$lower_ci, pooled_results$upper_ci)
+            pathogens <- c(pathogens, pathogen)
+            abs <- c(abs, antibiotic)
+        }
+    }
+    
+    conf_intervals <- matrix(conf_intervals, nrow = length(gradients), ncol = 2, byrow = TRUE)
+    results <- data.frame(
+        Antibiotic = abs,
+        Pathogen = pathogens,
+        Response = gradients,
+        Lower_CI = conf_intervals[, 1],
+        Upper_CI = conf_intervals[, 2]
+    )
+    
+    gradient_prefix <- "database_MI_pooled_gradients"
+    write.csv(results, build_output_path(gradient_prefix, output_tag), row.names = FALSE)
 }
 
 fit_combined_pathogen_drug_glmnet <- function(data_, output_tag = "lagged", runtime_options = get_runtime_options(), output_prefix = "database") {
@@ -1099,11 +1334,21 @@ fit_pathogen_random_effects_models <- function(data_, output_tag = "all_lagged",
     )
 }
 
+fit_country_random_effects_models <- function(data_, output_tag = "all_lagged", runtime_options = get_runtime_options(), allow_fallback = FALSE) {
+    fit_random_effects_models(
+        data_ = data_,
+        output_tag = output_tag,
+        runtime_options = runtime_options,
+        mode = "country",
+        allow_fallback = allow_fallback
+    )
+}
+
 fit_random_effects_models <- function(
     data_,
     output_tag,
     runtime_options = get_runtime_options(),
-    mode = c("class", "pathogen"),
+    mode = c("class", "pathogen", "country"),
     output_prefix = "database",
     allow_fallback = FALSE,
     model_family = "gaussian",
@@ -1128,7 +1373,7 @@ fit_random_effects_models <- function(
             upper_prefix <- "database_upperCI_ATC3_PCA_canonical_weighted"
             bootstrap_prefix <- "database_gradients_bootstraps_ATC3_PCA_canonical_weighted"
         }
-    } else {
+    } else if (mode == "pathogen") {
         label_var <- "Pathogen"
         random_effect_var <- "Antibiotic"
         singular_msg <- "pathogen"
@@ -1144,6 +1389,17 @@ fit_random_effects_models <- function(
             upper_prefix <- "database_upperCI_pathogen_PCA_canonical_weighted"
             bootstrap_prefix <- "database_gradients_bootstraps_pathogen_PCA_canonical_weighted"
         }
+    } else if (mode == "country") {# Create a composite label directly in the dataset
+        data_$Combo_Label <- paste(data_$Pathogen, data_$Antibiotic, sep = "___")
+        label_var <- "Combo_Label"
+        random_effect_var <- "ISO3"
+        singular_msg <- "country"
+        smoke_max <- Inf
+        
+        gradient_prefix <- if (identical(output_prefix, "Nagorsen")) "Nagorsen_gradients_country" else "database_gradients_country"
+        lower_prefix    <- if (identical(output_prefix, "Nagorsen")) "Nagorsen_lowerCI_country" else "database_lowerCI_country"
+        upper_prefix    <- if (identical(output_prefix, "Nagorsen")) "Nagorsen_upperCI_country" else "database_upperCI_country"
+        bootstrap_prefix<- if (identical(output_prefix, "Nagorsen")) "Nagorsen_bootstraps_country" else "database_bootstraps_country"
     }
 
     labels <- sort(unique(data_[[label_var]]))
@@ -1165,7 +1421,7 @@ fit_random_effects_models <- function(
         n_levels <- length(unique(subset_data[[random_effect_var]]))
 
         # Fit lmer if there are >2 levels. If singular/too few levels, check fallback.
-        if (n_levels > 2) {
+        if (n_levels > 2 && nrow(subset_data) > n_levels) {
             if (model_family == "gaussian") {
                 model <- fit_random_lmer(subset_data, random_effect_var = random_effect_var, extra_pcs = extra_pcs)
             } else if (model_family == "binomial") {
@@ -1205,6 +1461,38 @@ fit_random_effects_models <- function(
                 next
             }
         }
+        RMSE_val <- sqrt(mean(residuals(model)^2))
+        AIC_val <- AIC(model)
+        BIC_val <- BIC(model)
+        # R-Squared
+        r_sq <- tryCatch({
+            if (inherits(model, "merMod")) {
+                # Requires the MuMIn package for mixed model R-squared
+                # Returns Conditional R2 (fixed + random effects variance)
+                suppressWarnings(MuMIn::r.squaredGLMM(model)[1, "R2c"]) 
+            } else if (model_family == "gaussian") {
+                summary(model)$r.squared
+            } else {
+                1 - (model$deviance / model$null.deviance)
+            }
+        }, error = function(e) NA_real_)
+        # White Test
+        white_p <- tryCatch({
+            if (inherits(model, "merMod")) {
+                # Proxy White test for lmer: regress squared residuals on fitted values
+                aux_mod <- lm(residuals(model)^2 ~ poly(fitted(model), 2))
+                f_stat <- summary(aux_mod)$fstatistic
+                pf(f_stat[1], f_stat[2], f_stat[3], lower.tail = FALSE)
+            } else {
+                skedastic::white(model)$p.value
+            }
+        }, error = function(e) NA_real_)
+        # VIF
+        vifs <- tryCatch({
+            car::vif(model)
+        }, error = function(e) {
+            NA # Return NA if aliasing/rank deficiency breaks VIF
+        })
         # Centralized appendage handles both lm and lmer uniformly
         outdf <- build_bootstrap_df(label_var, label, summary_stats$bootstrap_values)
         accumulator <- append_random_effects_result(
@@ -1214,14 +1502,40 @@ fit_random_effects_models <- function(
             intercept = summary_stats$intercept,
             lower_ci = summary_stats$lower_ci,
             upper_ci = summary_stats$upper_ci,
-            bootstrap_df = outdf
+            bootstrap_df = outdf,
+            r_sq = r_sq,
+            white_p = white_p,
+            rmse = RMSE_val,
+            aic = AIC_val,
+            bic = BIC_val,
+            vifs = vifs
         )
+        # plot and save model residuals
+        png_filename <- paste0("residuals_", mode, "_", label, ".png")
+        png(png_filename, width = 800, height = 600)
+        plot(residuals(model), main = paste("Residuals for", mode, label))
+        abline(h = 0, col = "red")
+        dev.off()
+
+        print(summary(model))
     }
 
     model_gradients <- setNames(accumulator$gradients, accumulator$labels)
     model_intercepts <- setNames(accumulator$intercepts, accumulator$labels)
     model_lower_ci <- setNames(accumulator$lower_ci, accumulator$labels)
     model_upper_ci <- setNames(accumulator$upper_ci, accumulator$labels)
+
+    # --- NEW: Format combo outputs if in combo mode ---
+    if (mode == "country") {
+        model_gradients <- format_combo_results(model_gradients, "Gradient")
+        model_lower_ci  <- format_combo_results(model_lower_ci, "Lower_CI")
+        model_upper_ci  <- format_combo_results(model_upper_ci, "Upper_CI")
+        
+        # The bootstraps object is already a dataframe, so we just separate the column directly
+        accumulator$bootstraps <- accumulator$bootstraps %>%
+            tidyr::separate(Combo_Label, into = c("Pathogen", "Antibiotic"), sep = "___")
+    }
+    # --------------------------------------------------
 
     write_random_effects_outputs(
         gradient_prefix = gradient_prefix,
@@ -1232,7 +1546,13 @@ fit_random_effects_models <- function(
         gradients = model_gradients,
         lower_ci = model_lower_ci,
         upper_ci = model_upper_ci,
-        bootstraps = accumulator$bootstraps
+        bootstraps = accumulator$bootstraps,
+        r_squareds = accumulator$r_squareds,
+        white_tests = accumulator$white_tests,
+        rmses = accumulator$rmses,
+        aics = accumulator$aics,
+        bics = accumulator$bics,
+        vif_list = accumulator$vif_list
     )
 }
 
@@ -1240,15 +1560,14 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "main") {
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = "all",
             pathogen_output_tag = "main",
-            random_pathogen_output_tag = "all",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = FALSE,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database"
         )))
     }
@@ -1256,15 +1575,14 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "main_binomial") {
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = "all_binomial",
             pathogen_output_tag = "main_binomial",
-            random_pathogen_output_tag = "all_binomial",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = FALSE,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database",
             model_family = "binomial"
         )))
@@ -1273,15 +1591,14 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "extra_pcs") {
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = "all_extra_pcs",
             pathogen_output_tag = "extra_pcs",
-            random_pathogen_output_tag = "all_extra_pcs",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = FALSE,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database",
             extra_pcs = TRUE
         )))
@@ -1290,15 +1607,14 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "hic") {
         return(list(list(
             income = "HIC",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = "HIC",
             pathogen_output_tag = "HIC",
-            random_pathogen_output_tag = "HIC",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = FALSE,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database"
         )))
     }
@@ -1306,15 +1622,14 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "lmic") {
         return(list(list(
             income = "LMIC",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = "LMIC",
             pathogen_output_tag = "LMIC",
-            random_pathogen_output_tag = "LMIC",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = FALSE,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database"
         )))
     }
@@ -1323,28 +1638,26 @@ resolve_model_jobs <- function(scenario) {
         return(list(
             list(
                 income = "all",
-                merged_data_path = "merged_data_new_IQVIA.csv",
-                merged_sums_path = "merged_data_sums_new_IQVIA.csv",
+                summed_data_path = "summed_data_new_IQVIA.csv",
+                merged_sums_path = "summed_data_sums_new_IQVIA.csv",
                 class_output_tag = "all_IQVIA",
                 pathogen_output_tag = "IQVIA",
-                random_pathogen_output_tag = "all_IQVIA",
                 analysis_intent = "main_publication",
                 apply_lagged_response = FALSE,
                 apply_lagged_consumption = FALSE,
-                data_source = "merged",
+                data_source = "summed",
                 output_prefix = "database"
             ),
             list(
                 income = "all",
-                merged_data_path = "merged_data_new_IQVIAextrapolation.csv",
-                merged_sums_path = "merged_data_sums_new_IQVIAextrapolation.csv",
+                summed_data_path = "summed_data_new_IQVIAextrapolation.csv",
+                merged_sums_path = "summed_data_sums_new_IQVIAextrapolation.csv",
                 class_output_tag = "IQVIAextrapolation_all",
                 pathogen_output_tag = "IQVIAextrapolation",
-                random_pathogen_output_tag = "IQVIAextrapolation_all",
                 analysis_intent = "main_publication",
                 apply_lagged_response = FALSE,
                 apply_lagged_consumption = FALSE,
-                data_source = "merged",
+                data_source = "summed",
                 output_prefix = "database"
             )
         ))
@@ -1353,18 +1666,17 @@ resolve_model_jobs <- function(scenario) {
     if (scenario == "hospital_nagorsen") {
         return(list(list(
             income = "all",
-            merged_data_path = "",
+            summed_data_path = "",
             merged_sums_path = "",
             class_output_tag = "hospital_to_all_filtered",
             pathogen_output_tag = "hospital_to_all_filtered",
-            random_pathogen_output_tag = "hospital_to_all_filtered",
             analysis_intent = "supplementary_publication",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = FALSE,
             data_source = "nagorsen",
             output_prefix = "Nagorsen",
                 min_entries_per_combo = 20,
-            prepared_data_path = "merged_data_Nagorsen_hospital_to_all_filtered.csv"
+            prepared_data_path = "summed_data_Nagorsen_hospital_to_all_filtered.csv"
         )))
     }
 
@@ -1377,16 +1689,15 @@ resolve_model_jobs <- function(scenario) {
 
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = paste0("all_", tag_suffix),
             pathogen_output_tag = tag_suffix,
-            random_pathogen_output_tag = paste0("all_", tag_suffix),
             analysis_intent = "exploratory_only",
             apply_lagged_response = TRUE,
             apply_lagged_consumption = FALSE,
             lag_n = custom_lag,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database"
         )))
     }
@@ -1400,16 +1711,15 @@ resolve_model_jobs <- function(scenario) {
 
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = paste0("all_", tag_suffix),
             pathogen_output_tag = tag_suffix,
-            random_pathogen_output_tag = paste0("all_", tag_suffix),
             analysis_intent = "exploratory_only",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = TRUE,
             lag_n = custom_lag,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database"
         )))
     }
@@ -1430,17 +1740,31 @@ resolve_model_jobs <- function(scenario) {
         }
         return(list(list(
             income = "all",
-            merged_data_path = "merged_data_new.csv",
-            merged_sums_path = "merged_data_sums_new.csv",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
             class_output_tag = NA_character_,            # not used for permutation
             pathogen_output_tag = paste0("permutation", perm_class),
-            random_pathogen_output_tag = NA_character_,  # not used for permutation
             analysis_intent = "permutation",
             apply_lagged_response = FALSE,
             apply_lagged_consumption = FALSE,
-            data_source = "merged",
+            data_source = "summed",
             output_prefix = "database",
             permutation_class = perm_class
+        )))
+    }
+    
+    if (scenario == "mi") {
+        return(list(list(
+            income = "all",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
+            class_output_tag = "all_mi",
+            pathogen_output_tag = "mi",
+            analysis_intent = "main_mi",
+            apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
+            data_source = "summed",
+            output_prefix = "database"
         )))
     }
 
@@ -1469,12 +1793,12 @@ run_class_model_pipeline <- function(job) {
 
     inputs <- if (identical(job$data_source, "nagorsen")) {
         load_nagorsen_model_inputs(
-            prepared_data_path = job_or_default(job, "prepared_data_path", "merged_data_Nagorsen_hospital_to_all_filtered.csv"),
+            prepared_data_path = job_or_default(job, "prepared_data_path", "summed_data_Nagorsen_hospital_to_all_filtered.csv"),
             min_entries_per_combo = job_or_default(job, "min_entries_per_combo", 20)
         )
     } else {
         load_model_inputs(
-            merged_data_path = job$merged_data_path,
+            summed_data_path = job$summed_data_path,
             merged_sums_path = job$merged_sums_path
         )
     }
@@ -1560,7 +1884,7 @@ run_class_model_pipeline <- function(job) {
         )
         fit_random_effects_models(
             data_,
-            output_tag = job$random_pathogen_output_tag,
+            output_tag = job$class_output_tag,
             runtime_options = runtime_options,
             mode = "pathogen",
             output_prefix = job$output_prefix,
@@ -1568,8 +1892,77 @@ run_class_model_pipeline <- function(job) {
             model_family = model_family,
             extra_pcs = is_extra_pcs
         )
+        fit_random_effects_models(
+            data_,
+            output_tag = job$class_output_tag,
+            runtime_options = runtime_options,
+            mode = "country",
+            output_prefix = job$output_prefix,
+            allow_fallback = allow_fallback,
+            model_family = model_family,
+            extra_pcs = is_extra_pcs
+        )
     }
 }
+
+run_mi_class_model_pipeline <- function(job) {
+    runtime_options <- get_runtime_options()
+
+    runtime_options$boot_nsim <- 1000 
+    model_family <- job_or_default(job, "model_family", "gaussian")
+    
+    set.seed(runtime_options$random_seed)
+    global_consumption <- build_global_consumption_reference()
+    
+    # NEW: List to hold all 20 processed datasets
+    mi_datasets <- list()
+    
+    for (i in 1:20) {
+        imputed_file <- paste0("imputed_data_", i, ".csv")
+        if (!file.exists(imputed_file)) next
+        
+        # Temporarily overwrite job path for the loader
+        job$summed_data_path <- imputed_file 
+        
+        inputs <- load_model_inputs(
+            summed_data_path = job$summed_data_path,
+            merged_sums_path = job$merged_sums_path
+        )
+        data <- select_income_slice(inputs, job$income)
+        
+        data <- scale_and_log_transform(
+            data,
+            global_consumption,
+            consumption_only = identical(model_family, "binomial")
+        )
+
+        # if global option MI_EQUAL=1, then set Weight to 1 for all rows
+        if (get_integer_env("MI_EQUAL", default = 0) == 1) {
+            message("[ddd-linear-model] MI_EQUAL=1: Setting all weights to 1 for imputed dataset ", i)
+            data$Weight <- 1
+        }
+        
+        data_ <- limit_for_smoke_mode(data, runtime_options)
+        mi_datasets[[i]] <- data_
+    }
+    
+    if (length(mi_datasets) == 0) {
+        stop("No imputed datasets found matching 'imputed_data1.csv', etc.")
+    }
+
+    is_extra_pcs <- isTRUE(job$extra_pcs)
+    
+    # Pass the entire list of datasets to the fitting function
+    fit_combined_pathogen_drug_mi_lm(
+        mi_datasets,
+        output_tag = paste0(job$pathogen_output_tag, "_MI_pooled"),
+        runtime_options = runtime_options,
+        output_prefix = job$output_prefix,
+        model_family = model_family,
+        extra_pcs = is_extra_pcs
+    )
+}
+
 require(lme4)
 scenario <- get_amr_scenario()
 jobs <- resolve_model_jobs(scenario)
@@ -1579,16 +1972,18 @@ if (length(jobs) == 0) {
 } else {
     for (job in jobs) {
         message(
-            "[ddd-linear-model] Running job with data=", job$merged_data_path,
+            "[ddd-linear-model] Running job with data=", job$summed_data_path,
             ", income=", job$income,
             ", analysis_intent=", job$analysis_intent,
             ", apply_lagged_response=", job$apply_lagged_response,
             ", apply_lagged_consumption=", job$apply_lagged_consumption,
             ", class_output_tag=", job$class_output_tag,
-            ", pathogen_output_tag=", job$pathogen_output_tag,
-            ", random_pathogen_output_tag=", job$random_pathogen_output_tag
+            ", pathogen_output_tag=", job$pathogen_output_tag
         )
-        run_class_model_pipeline(job)
+        if (identical(job$analysis_intent, "main_mi")) {
+            run_mi_class_model_pipeline(job)
+        } else {
+            run_class_model_pipeline(job)
+        }
     }
 }
-
