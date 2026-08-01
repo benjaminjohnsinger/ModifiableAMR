@@ -110,9 +110,9 @@ prepare_main_regression_data <- function(
     atlase_path = "ATLAS_Enterococcus/ATLAS_Enterococcus_renamed.csv",
     consumption_path = "antibiotic_consumption_by_ATC3.csv",
     pca_path = "Chungman/pcato10.csv",
-    no_covariates_path = "merged_data_new_no_covariates.csv",
-    output_path = "merged_data_new.csv",
-    sums_output_path = "merged_data_sums_new.csv",
+    no_covariates_path = "summed_data_new_no_covariates.csv",
+    output_path = "summed_data_new.csv",
+    sums_output_path = "summed_data_sums_new.csv",
     year_cutoff = 2018
 ) {
   ## Merge Joe's data with ATLAS and GASP data
@@ -127,6 +127,26 @@ prepare_main_regression_data <- function(
 
   JOE <- JOE[,c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
   ATLAS <- ATLAS[,c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
+
+  # Coerce to numeric in case any source file reads them as character
+  JOE$Percent.Resistant.Isolates <- as.numeric(JOE$Percent.Resistant.Isolates)
+  JOE$Total.Isolates <- as.numeric(JOE$Total.Isolates)
+  ATLAS$Percent.Resistant.Isolates <- as.numeric(ATLAS$Percent.Resistant.Isolates)
+  ATLAS$Total.Isolates <- as.numeric(ATLAS$Total.Isolates)
+
+  # within each dataset, if there are rows with the same ISO3, Year, Pathogen, ATC.Class, and Total.Isolates, combine Percent.Resistant.Isolates using independent probabilities formula
+  JOE <- JOE %>%
+    group_by(ISO3, Year, Pathogen, ATC.Class, Total.Isolates) %>%
+    summarise(
+      Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
+      .groups = "drop"
+    )
+  ATLAS <- ATLAS %>%
+    group_by(ISO3, Year, Pathogen, ATC.Class, Total.Isolates) %>%
+    summarise(
+      Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
+      .groups = "drop"
+    )
 
   # Merge datasets
   merged_data <- rbind(JOE, ATLAS)
