@@ -220,6 +220,7 @@ load_nagorsen_model_inputs <- function(
     data$PC8 <- df_pc$PC8[idx]
     data$PC9 <- df_pc$PC9[idx]
     data$PC10 <- df_pc$PC10[idx]
+    data$GDP <- df_pc$GDP[idx]
 
     data <- data %>%
         select(
@@ -240,6 +241,7 @@ load_nagorsen_model_inputs <- function(
             PC8 = PC8,
             PC9 = PC9,
             PC10 = PC10,
+            GDP = GDP,
             Year = end_year
         )
 
@@ -305,7 +307,9 @@ load_model_inputs <- function(
             Consumption.Class = .data[[consumption_class_col]]
         )
 
-    country_covariates <- c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "Year")
+    country_covariates <- c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "GDP", "Year")
+    data$GDP <- data$GDP / mean(data$GDP, na.rm = TRUE)
+
     data <- data[
         !is.na(data$Consumption) & !is.na(data$Resistance) &
             !is.na(data$Pathogen) & !is.na(data$Antibiotic) & !is.na(data$Weight),
@@ -431,6 +435,7 @@ scale_and_log_transform <- function(df, global_consumption, model_family = "gaus
     }
 
     # make GDP and Year have mean 0 and sd 1
+    df$GDP <- scale(df$GDP)
     df$Year <- scale(df$Year)
 
     df
@@ -438,9 +443,9 @@ scale_and_log_transform <- function(df, global_consumption, model_family = "gaus
 
 get_fixed_effects_formula <- function(extra_pcs = FALSE) {
     if (extra_pcs) {
-        Resistance ~ Consumption + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10 + Year
+        Resistance ~ Consumption + PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10 + GDP + Year
     } else {
-        Resistance ~ Consumption + PC1 + PC2 + PC3 + Year
+        Resistance ~ Consumption + PC1 + PC2 + PC3 + GDP + Year
     }
 }
 
@@ -475,7 +480,7 @@ fit_random_lmer <- function(data_subset, random_effect_var, extra_pcs = FALSE) {
             "Resistance ~ Consumption + (Consumption||", random_effect_var,
             ") + PC1 + PC2 + PC3",
             if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "",
-            " + Year"
+            " + GDP + Year"
         )
     )
     lmer(
@@ -491,7 +496,7 @@ fit_binomial_glmer <- function(data_subset, random_effect_var, extra_pcs = FALSE
         paste0(
             ") + PC1 + PC2 + PC3",
             if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "",
-            " + Year"
+            " + GDP + Year"
         )
     )
     glmer(
@@ -509,7 +514,7 @@ fit_random_ppml_glmer <- function(data_subset, random_effect_var, extra_pcs = FA
         "Resistance ~ Consumption + (Consumption||", random_effect_var,
         ") + PC1 + PC2 + PC3",
         if (extra_pcs) " + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10" else "",
-        " + Year"
+        " + GDP + Year"
     )
 
     # suppressWarnings hides the "non-integer counts" message
@@ -1142,9 +1147,9 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
         for (pathogen in pathogens_to_fit) {
             data_subset <- data_[data_$Pathogen == pathogen & data_$Antibiotic == antibiotic, ]
             if (extra_pcs) {
-                vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "Year", "Weight")
+                vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "GDP", "Year", "Weight")
             } else {
-                vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "Year", "Weight")
+                vars_needed <- c("Resistance", "Consumption", "PC1", "PC2", "PC3", "GDP", "Year", "Weight")
             }
             if (model_family == "binomial") {
                 vars_needed <- c(vars_needed, "resistant_count")
@@ -1197,9 +1202,9 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
 
             # Compute R-squared and per-variable variance explained
             if (extra_pcs) {
-                ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "Year")
+                ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "GDP", "Year")
             } else {
-                ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "Year")
+                ve_vars <- c("Consumption", "PC1", "PC2", "PC3", "GDP", "Year")
             }
             ve <- setNames(rep(NA_real_, length(ve_vars)), ve_vars)
             vifs <- setNames(rep(NA_real_, length(ve_vars)), ve_vars)
