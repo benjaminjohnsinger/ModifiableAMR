@@ -13,6 +13,12 @@ run_prepare_data_stage <- function(scenario = get_amr_scenario()) {
       "DDD_country_year_class.csv",
       "Chungman/Chungman_pca_renamed.csv"
     ), stage = "prepare_data")
+  } else if (scenario == "main_finer") {
+    require_inputs(c(
+      "finer_data_new.csv",
+      "antibiotic_consumption_by_ATC3.csv",
+      "Chungman/Chungman_pca_renamed.csv"
+    ), stage = "prepare_data")
   } else if (scenario == "hospital_nagorsen") {
     require_inputs(c(
       "Nagorsen_clean.csv",
@@ -24,6 +30,10 @@ run_prepare_data_stage <- function(scenario = get_amr_scenario()) {
     message("[prepare_data] Running main regression data preparation...")
     source("data_processing.r")
     prepare_main_regression_data()
+  } else if (scenario == "main_finer") {
+    message("[prepare_data] Running finer main regression data preparation...")
+    source("data_processing.r")
+    prepare_main_finer_regression_data()
   } else if (scenario == "hospital_nagorsen") {
     message("[prepare_data] Running hospital regression data preparation...")
     source("data_processing.r")

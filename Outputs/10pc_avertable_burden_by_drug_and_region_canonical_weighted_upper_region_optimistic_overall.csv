@@ -1,0 +1,64 @@
+"region","drug","avertable_burden","lower_bound","upper_bound","avertable_burden_per_100k","lower_bound_per_100k","upper_bound_per_100k"
+"Central Europe, Eastern Europe, and Central Asia","J01C",0,0,0,0,0,0
+"High-income","J01C",0,0,0,0,0,0
+"Latin America and Caribbean","J01C",0,0,0,0,0,0
+"North Africa and Middle East","J01C",0,0,0,0,0,0
+"South Asia","J01C",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","J01C",0,0,0,0,0,0
+"Sub-Saharan Africa","J01C",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","J01D",0,0,0,0,0,0
+"High-income","J01D",0,0,0,0,0,0
+"Latin America and Caribbean","J01D",0,0,0,0,0,0
+"North Africa and Middle East","J01D",0,0,0,0,0,0
+"South Asia","J01D",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","J01D",0,0,0,0,0,0
+"Sub-Saharan Africa","J01D",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","J01G",0,0,0,0,0,0
+"High-income","J01G",0,0,0,0,0,0
+"Latin America and Caribbean","J01G",0,0,0,0,0,0
+"North Africa and Middle East","J01G",0,0,0,0,0,0
+"South Asia","J01G",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","J01G",0,0,0,0,0,0
+"Sub-Saharan Africa","J01G",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","J01M",5973.01632725228,4945.76437274083,7090.22856326642,1.45354630728708,1.20356234552878,1.72542229609111
+"High-income","J01M",17848.9190921785,15059.491345689,20646.8424061422,2.25800293140415,1.90512240144122,2.61195820523035
+"Latin America and Caribbean","J01M",5781.86891957479,4929.48055589991,6756.15116320811,0.910062446821316,0.775897066962612,1.0634138449365
+"North Africa and Middle East","J01M",8909.00797442561,7614.78391860106,10320.4317533453,1.41972725532809,1.21348149016209,1.64464980714337
+"South Asia","J01M",31106.6910897686,26491.5284014241,36259.7959614439,1.71328154588687,1.45908951233409,1.99710213789978
+"Southeast Asia, East Asia, and Oceania","J01M",24755.2770307976,20340.8818946698,29593.952008054,1.06528547731765,0.875322302039579,1.27350654373185
+"Sub-Saharan Africa","J01M",17353.1890550305,15123.4040390424,19419.4226539305,1.62659976518976,1.41759104800654,1.82027800358962
+"Central Europe, Eastern Europe, and Central Asia","Other",0,0,0,0,0,0
+"High-income","Other",0,0,0,0,0,0
+"Latin America and Caribbean","Other",0,0,0,0,0,0
+"North Africa and Middle East","Other",0,0,0,0,0,0
+"South Asia","Other",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","Other",0,0,0,0,0,0
+"Sub-Saharan Africa","Other",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","J01E",0,0,0,0,0,0
+"High-income","J01E",0,0,0,0,0,0
+"Latin America and Caribbean","J01E",0,0,0,0,0,0
+"North Africa and Middle East","J01E",0,0,0,0,0,0
+"South Asia","J01E",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","J01E",0,0,0,0,0,0
+"Sub-Saharan Africa","J01E",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","J01X",0,0,0,0,0,0
+"High-income","J01X",0,0,0,0,0,0
+"Latin America and Caribbean","J01X",0,0,0,0,0,0
+"North Africa and Middle East","J01X",0,0,0,0,0,0
+"South Asia","J01X",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","J01X",0,0,0,0,0,0
+"Sub-Saharan Africa","J01X",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","J01F",0,0,0,0,0,0
+"High-income","J01F",243.213108953992,18.4059271946995,461.765635741843,0.0307680207489248,0.00232846803474249,0.0584163194276388
+"Latin America and Caribbean","J01F",0,0,0,0,0,0
+"North Africa and Middle East","J01F",29.618338850966,5.69080739006432,52.6415164754995,0.00471993773548848,0.000906879237249501,0.00838887965041784
+"South Asia","J01F",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","J01F",0,0,0,0,0,0
+"Sub-Saharan Africa","J01F",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Multi-drug resistance in Salmonella Typhi and Paratyphi",0,0,0,0,0,0
+"High-income","Multi-drug resistance in Salmonella Typhi and Paratyphi",0,0,0,0,0,0
+"Latin America and Caribbean","Multi-drug resistance in Salmonella Typhi and Paratyphi",0,0,0,0,0,0
+"North Africa and Middle East","Multi-drug resistance in Salmonella Typhi and Paratyphi",0,0,0,0,0,0
+"South Asia","Multi-drug resistance in Salmonella Typhi and Paratyphi",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","Multi-drug resistance in Salmonella Typhi and Paratyphi",0,0,0,0,0,0
+"Sub-Saharan Africa","Multi-drug resistance in Salmonella Typhi and Paratyphi",0,0,0,0,0,0

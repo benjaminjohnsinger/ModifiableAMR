@@ -1,5 +1,4 @@
 # Creating a mapping from ISO3 codes to IHME regions
-
 # Create the dataframe with ISO3 codes and corresponding IHME regions
 iso3_ihme_mapping <- data.frame(
   iso3 = c(
@@ -10,6 +9,7 @@ iso3_ihme_mapping <- data.frame(
     
     # Southeast Asia
     "KHM", "IDN", "LAO", "MYS", "MMR", "PHL", "SGP", "THA", "TLS", "VNM", "BRN", "MDV",
+    "VNM",  # Vietnam is also known as Viet Nam
     
     # Oceania
     "ASM", "AUS", "FJI", "FSM", "GUM", "KIR", "MHL", "NRU", "NCL", "NZL", "NIU", 
@@ -27,6 +27,7 @@ iso3_ihme_mapping <- data.frame(
     
     # Eastern Europe
     "BLR", "EST", "LVA", "LTU", "MDA", "RUS", "UKR",
+    "RUS",
     
     # Western Europe
     "AND", "AUT", "BEL", "CYP", "DNK", "FIN", "FRA", "DEU", "GRC", "ISL", "IRL", "ITA", 
@@ -45,6 +46,7 @@ iso3_ihme_mapping <- data.frame(
     
     # Central Latin America
     "COL", "CRI", "SLV", "GTM", "HND", "MEX", "NIC", "PAN", "VEN", "BLZ",
+    "VEN",  # Venezuela is also known as Venezuela, RB
     
     # Southern Latin America
     "ARG", "CHL", "URY",
@@ -55,6 +57,8 @@ iso3_ihme_mapping <- data.frame(
     # North Africa and Middle East
     "AFG", "DZA", "BHR", "EGY", "IRN", "IRQ", "JOR", "KWT", "LBN", "LBY", "MAR", "OMN", 
     "PSE", "QAT", "SAU", "SDN", "SYR", "TUN", "TUR", "ARE", "YEM", "ISR",
+    "EGY",
+    "TUR",
     
     # South Asia
     "BGD", "BTN", "IND", "NPL", "PAK", "LKA",
@@ -86,6 +90,7 @@ iso3_ihme_mapping <- data.frame(
     "South Korea",
     # Southeast Asia
     "Cambodia", "Indonesia", "Laos", "Malaysia", "Myanmar", "Philippines", "Singapore", "Thailand", "Timor-Leste", "Vietnam", "Brunei", "Maldives",
+    "Viet Nam",  # Vietnam is also known as Viet Nam
     # Oceania
     "American Samoa", "Australia", "Fiji", "Micronesia", "Guam", "Kiribati", "Marshall Islands", "Nauru", "New Caledonia", "New Zealand", "Niue",
     "Northern Mariana Islands", "Palau", "Papua New Guinea", "Samoa", "Solomon Islands", "Tonga", "Tuvalu", "Vanuatu", "Cook Islands", "French Polynesia",
@@ -99,6 +104,7 @@ iso3_ihme_mapping <- data.frame(
     "Macedonia",
     # Eastern Europe
     "Belarus", "Estonia", "Latvia", "Lithuania", "Moldova", "Russia", "Ukraine",
+    "Russian Federation",
     # Western Europe
     "Andorra", "Austria", "Belgium", "Cyprus", "Denmark", "Finland", "France", "Germany", "Greece", "Iceland", "Ireland", "Italy",
     "Luxembourg", "Malta", "Monaco", "Netherlands", "Norway", "Portugal", "San Marino", "Spain", "Sweden", "Switzerland", "United Kingdom",
@@ -112,6 +118,7 @@ iso3_ihme_mapping <- data.frame(
     "Bolivia", "Ecuador", "Peru",
     # Central Latin America
     "Colombia", "Costa Rica", "El Salvador", "Guatemala", "Honduras", "Mexico", "Nicaragua", "Panama", "Venezuela", "Belize",
+    "Venezuela, RB",
     # Southern Latin America
     "Argentina", "Chile", "Uruguay",
     # Tropical Latin America
@@ -119,6 +126,8 @@ iso3_ihme_mapping <- data.frame(
     # North Africa and Middle East
     "Afghanistan", "Algeria", "Bahrain", "Egypt", "Iran", "Iraq", "Jordan", "Kuwait", "Lebanon", "Libya", "Morocco", "Oman",
     "Palestine", "Qatar", "Saudi Arabia", "Sudan", "Syria", "Tunisia", "Turkey", "United Arab Emirates", "Yemen", "Israel",
+    "Egypt, Arab Rep.",
+    "Turkiye",
     # South Asia
     "Bangladesh", "Bhutan", "India", "Nepal", "Pakistan", "Sri Lanka",
     # Central Sub-Saharan Africa
@@ -141,19 +150,19 @@ iso3_ihme_mapping <- data.frame(
   
   ihme_region = c(
     # East Asia
-    rep("Southeast Asia, East Asia, and Oceania", 1+6+12+21+2),
+    rep("Southeast Asia, East Asia, and Oceania", 1+7+12+21+2),
     
     # Central Europe
-    rep("Central Europe, Eastern Europe, and Central Asia", 13+7+8+4),
+    rep("Central Europe, Eastern Europe, and Central Asia", 13+8+8+4),
     
     # Western Europe
     rep("High-income", 23+2),
     
     # Caribbean
-    rep("Latin America and Caribbean", 18+3+10+3+2+2),
+    rep("Latin America and Caribbean", 18+3+11+3+2+2),
     
     # North Africa and Middle East
-    rep("North Africa and Middle East", 22),
+    rep("North Africa and Middle East", 24),
     
     # South Asia
     rep("South Asia", 6),
@@ -173,6 +182,7 @@ iso3_ihme_mapping <- data.frame(
     rep("Southeast Asia", 3), # Thailand, Timor-Leste, Vietnam
     rep("High-income Asia Pacific", 1), # Brunei
     rep("South Asia", 1), # Maldives
+    rep("Southeast Asia", 1), # Vietnam is also known as Viet Nam
 
     # Oceania
     rep("Oceania", 1), # American Samoa
@@ -188,7 +198,7 @@ iso3_ihme_mapping <- data.frame(
     rep("Central Europe", 13+3),
 
     # Eastern Europe
-    rep("Eastern Europe", 7),
+    rep("Eastern Europe", 8),
     
     # Western Europe
     rep("Western Europe", 23),
@@ -203,7 +213,7 @@ iso3_ihme_mapping <- data.frame(
     rep("Andean Latin America", 3),
 
     # Central Latin America
-    rep("Central Latin America", 10),
+    rep("Central Latin America", 11),
 
     # Southern Latin America
     rep("Southern Latin America", 3),
@@ -212,7 +222,7 @@ iso3_ihme_mapping <- data.frame(
     rep("Tropical Latin America", 2),
     
     # North Africa and Middle East
-    rep("North Africa and Middle East", 22),
+    rep("North Africa and Middle East", 24),
     
     # South Asia
     rep("South Asia", 6),
@@ -229,7 +239,7 @@ iso3_ihme_mapping <- data.frame(
     # Western Sub-Saharan Africa
     rep("Western Sub-Saharan Africa", 19+4)
   ),
-   lending_group = c(
+  lending_group = c(
     # East Asia
     "High income",       # Hong Kong SAR, China
     "Upper middle income", # China
@@ -253,6 +263,7 @@ iso3_ihme_mapping <- data.frame(
     "Lower middle income", # Vietnam
     "High income",       # Brunei Darussalam
     "Upper middle income", # Maldives
+    "Lower middle income", # Vietnam - Duplicate
     # Oceania
     "Upper middle income", # American Samoa
     "High income",       # Australia
@@ -310,6 +321,7 @@ iso3_ihme_mapping <- data.frame(
     "Lower middle income", # Moldova
     "High income",       # Russian Federation (Russia)
     "Lower middle income", # Ukraine
+    "High income",       # Russian Federation - Duplicate
     # Western Europe
     "High income",       # Andorra
     "High income",       # Austria
@@ -373,6 +385,7 @@ iso3_ihme_mapping <- data.frame(
     "High income",       # Panama
     "Upper middle income", # Venezuela, RB (Venezuela) - *Note: World Bank currently lists Venezuela as 'Unclassified' due to data unavailability, but historically upper-middle income.*
     "Upper middle income", # Belize
+    "Upper middle income", # Venezuela - Duplicate
     # Southern Latin America
     "Upper middle income", # Argentina
     "High income",       # Chile
@@ -403,6 +416,8 @@ iso3_ihme_mapping <- data.frame(
     "High income",       # United Arab Emirates
     "Low income",        # Yemen
     "High income",       # Israel
+    "Lower middle income", # Egypt, Arab Rep. - Duplicate
+    "Upper middle income", # Türkiye (Turkey) - Duplicate
     # South Asia
     "Lower middle income", # Bangladesh
     "Lower middle income", # Bhutan
@@ -469,8 +484,65 @@ iso3_ihme_mapping <- data.frame(
     "Lower middle income", # Cote D'Ivoire - Duplicate
     "Low income",        # Gambia, The - Duplicate
     "Lower middle income"  # Sao Tome and Principe - Duplicate
-)
-
+  ),
+  gbs_region = c(
+    # East Asia
+    rep("East Asia", 9),
+    
+    # Southeast Asia
+    rep("South/Southeast Asia", 13),
+    
+    # Oceania
+    rep("Oceania", 21),
+    
+    # Central Asia
+    rep("Central Asia", 9),
+    
+    # Central Europe
+    rep("Europe", 16),
+    
+    # Eastern Europe
+    rep("Europe", 8),
+    
+    # Western Europe
+    rep("Europe", 23),
+    
+    # High-income North America
+    rep("North America", 2),
+    
+    # Caribbean
+    rep("Latin America", 20),
+    
+    # Andean Latin America
+    rep("Latin America", 3),
+    
+    # Central Latin America
+    rep("Latin America", 11),
+    
+    # Southern Latin America
+    rep("Latin America", 3),
+    
+    # Tropical Latin America
+    rep("Latin America", 2),
+    
+    # North Africa and Middle East
+    rep("North Africa & Middle East", 24),
+    
+    # South Asia
+    rep("South/Southeast Asia", 6),
+    
+    # Central Sub-Saharan Africa
+    rep("Sub-Saharan Africa", 8),
+    
+    # Eastern Sub-Saharan Africa
+    rep("Sub-Saharan Africa", 17),
+    
+    # Southern Sub-Saharan Africa
+    rep("Sub-Saharan Africa", 7),
+    
+    # Western Sub-Saharan Africa
+    rep("Sub-Saharan Africa", 23)
+  )
 )
 
 # Display the first few rows of the mapping
@@ -490,7 +562,11 @@ get_ihme_region <- function(iso3_code) {
 }
 
 atc_mapping <- list(
-  "J01A" = c("Tetracycline", "Tetracyclines", "Minocycline", "Tigecycline", "Glycylcyclines"),
+  "J01A" = c(
+    "Tetracycline", "Tetracyclines", "Minocycline", "Tigecycline", "Glycylcyclines",
+    "Doxycycline", "Demeclocycline", "Methacycline", "Omadacycline", "Eravacycline",
+    "Sarecycline"
+  ),
   
   "J01C" = c("Beta lactam antibacterials, penicillins", "Penicillins", "BSP", "NSP", "Mecillinam",
              "Broad spectrum penicillins",  "Narrow spectrum penicillins",
@@ -536,11 +612,36 @@ atc_names <- list(
   "J01A" = "Tetracyclines",
   "J01B" = "Glycopeptides and Lipopeptides",
   "J01C" = "Penicillins",
-  "J01D" = "Other Beta-Lactams",
+  "J01D" = "Non-Penicillin Beta-Lactams",
   "J01E" = "Sulfonamides and Trimethoprim",
-  "J01F" = "Macrolides, Lincosamides and Streptogramins",
+  "J01F" = "Macrolides",
   "J01G" = "Aminoglycosides",
-  "J01M" = "Quniolones"
+  "J01M" = "Quinolones"
+)
+
+antibiotic_mapping <- list(
+  "Carbapenems"                     = c("Doripenem", "Ertapenem", "Imipenem", "Meropenem"),
+  "Ceftazidime"                     = c("Ceftazidime", "Ceftazidime avibactam"),
+  "Fluoroquinolones"                = c("Levofloxacin", "Ciprofloxacin"),
+  "Fourth-generation cephalosporins"= c("Cefepime"),
+  "Third-generation cephalosporins" = c("Ceftriaxone", "Cefixime"),
+  "Trimethoprim-sulfamethoxazole"   = c("Trimethoprim sulfa"),
+  "Aminoglycosides"                 = c("Gentamicin"),
+  "Polymyxins"                      = c("Colistin"),
+  "Amikacin"                        = c("Amikacin"),
+  "Tetracyclines"                   = c("Minocycline", "Tetracycline"),
+  "Penicillins"                     = c("Amoxy/clav", "Ampicillin", "Ampicillin sulbactam", "Penicillin"),
+  "Macrolides"                      = c("Azithromycin", "Erythromycin"),
+  "Oxacillin/Methicillin (MRSA)"    = character(0),
+  "Vancomycin"                      = c("Vancomycin"),
+  "Aminoglycosides (high-level)"    = character(0),
+  "Piperacillin-tazobactam"         = c("Pip/taz"),
+  "Aminocyclitols"                  = character(0),
+  "Glycylcyclines"                  = c("Tigecycline"),
+  "Monobactams"                     = c("Aztreonam"),
+  "Fifth-generation cephalosporins" = c("Ceftaroline"),
+  "Novel cephalosporins"            = c("Ceftolozane tazobactam"),
+  "Oxazolidinones"                  = c("Linezolid")
 )
 
 bacteria_mapping <- data.frame(
@@ -596,7 +697,7 @@ bacteria_mapping <- data.frame(
     "Neisseria gonorrhoeae",
     "Enterococcus spp."
   ),
-  joe_names = c(
+  canonical_names = c(
     "Acinetobacter spp.",
     "E. coli",
     "K. pneumoniae",
@@ -650,10 +751,10 @@ bacteria_mapping <- data.frame(
   )
 )
 get_bacteria_name <- function(ihme_name) {
-  if (ihme_name %in% bacteria_mapping$joe_names) {
+  if (ihme_name %in% bacteria_mapping$canonical_names) {
     return(ihme_name)
   }
-  match <- bacteria_mapping[bacteria_mapping$in_names == ihme_name, "joe_names"]
+  match <- bacteria_mapping[bacteria_mapping$in_names == ihme_name, "canonical_names"]
   if (length(match) > 0 && !is.na(match)) {
     return(match)
   } else {

@@ -16,6 +16,66 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
       class_tag = "all_binomial",
       random_pathogen_tag = "all_binomial"
     )
+  } else if (scenario == "continuity") {
+    plot_tags <- list(
+      pathogen_tag = "mainccorrected",
+      class_tag = "allccorrected",
+      random_pathogen_tag = "allccorrected"
+    )
+  } else if (scenario == "continuity6") {
+    plot_tags <- list(
+      pathogen_tag = "mainccorrected6",
+      class_tag = "allccorrected6",
+      random_pathogen_tag = "allccorrected6"
+    )
+  } else if (scenario == "continuity100") {
+    plot_tags <- list(
+      pathogen_tag = "mainccorrected100",
+      class_tag = "allccorrected100",
+      random_pathogen_tag = "allccorrected100"
+    )
+  } else if (scenario == "raw_iqvia") {
+    plot_tags <- list(
+      pathogen_tag = "main_iqvia",
+      class_tag = "all_iqvia",
+      random_pathogen_tag = "all_iqvia"
+    )
+  } else if (scenario == "main_ppml") {
+    plot_tags <- list(
+      pathogen_tag = "main_ppml",
+      class_tag = "all_ppml",
+      random_pathogen_tag = "all_ppml"
+    )
+  } else if (scenario == "main_2000") {
+    plot_tags <- list(
+      pathogen_tag = "main_2000",
+      class_tag = "all_2000",
+      random_pathogen_tag = "all_2000"
+    )
+  } else if (scenario == "main_2000_plot") {
+    plot_tags <- list(
+      pathogen_tag = "main_2000",
+      class_tag = "all_2000",
+      random_pathogen_tag = "all_2000"
+    )
+  } else if (scenario == "main_finer") {
+    plot_tags <- list(
+      pathogen_tag = "main_finer",
+      class_tag = "all_finer",
+      random_pathogen_tag = "all_finer"
+    )
+  } else if (scenario == "hic_ppml") {
+    plot_tags <- list(
+      pathogen_tag = "hic_ppml",
+      class_tag = "hic_ppml",
+      random_pathogen_tag = "hic_ppml"
+    )
+  } else if (scenario == "lmic_ppml") {
+    plot_tags <- list(
+      pathogen_tag = "lmic_ppml",
+      class_tag = "lmic_ppml",
+      random_pathogen_tag = "lmic_ppml"
+    )
   } else if (scenario == "hic") {
     plot_tags <- list(
       pathogen_tag = "HIC",
@@ -52,11 +112,34 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
       class_tag = paste0("all_", tag_suffix),
       random_pathogen_tag = paste0("all_", tag_suffix)
     )
+  } else if (scenario == "consumption_lagged_ppml") {
+    custom_lag <- as.integer(Sys.getenv("AMR_LAG_N", unset = "1"))
+    if (is.na(custom_lag)) custom_lag <- 1
+
+    tag_suffix <- if (custom_lag == 1) "clagged_ppml" else paste0("clagged_ppml_", custom_lag, "y")
+
+    plot_tags <- list(
+      pathogen_tag = tag_suffix,
+      class_tag = paste0("all_", tag_suffix),
+      random_pathogen_tag = paste0("all_", tag_suffix)
+    )
   } else if (scenario == "extra_pcs") {
     plot_tags <- list(
       pathogen_tag = "extra_pcs",
       class_tag = "all_extra_pcs",
       random_pathogen_tag = "all_extra_pcs"
+    )
+  } else if (scenario == "extra_pcs_ppml") {
+    plot_tags <- list(
+      pathogen_tag = "extra_pcs_ppml",
+      class_tag = "all_extra_pcs_ppml",
+      random_pathogen_tag = "all_extra_pcs_ppml"
+    )
+  } else if (scenario == "mi") {
+    plot_tags <- list(
+      pathogen_tag = "mi",
+      class_tag = "all_mi",
+      random_pathogen_tag = "all_mi"
     )
   }
 
@@ -97,7 +180,7 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
   message("[generate_figures] Figure2 pathogen bootstrap input: ", fig2_pathogen_bootstrap_input)
 
   # Added exploratory_lagged to require the correct inputs
-  if (scenario %in% c("main", "main_binomial", "hic", "lmic", "exploratory_lagged", "consumption_lagged")) {
+  if (scenario %in% c("main", "continuity", "continuity6", "continuity100",  "main_2000", "raw_iqvia", "main_2000_plot", "main_finer", "main_binomial", "main_ppml", "hic", "hic_ppml", "lmic", "lmic_ppml", "exploratory_lagged", "consumption_lagged", "consumption_lagged_ppml", "extra_pcs", "extra_pcs_ppml", "mi")) {
     require_inputs(c(
       fig1_pathogen_input,
       fig1_class_gradients_input,
@@ -112,7 +195,7 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
     )
   }
 
-  if (scenario %in% c("main", "hic", "lmic")) {
+  if (scenario %in% c("main", "continuity", "continuity6", "continuity100", "main_2000", "raw_iqvia", "main_2000_plot", "main_finer", "hic", "lmic", "main_ppml", "hic_ppml", "lmic_ppml")) {
     burden_files_present <- warn_missing_inputs(c(
       AMR_CONFIG$burden_inputs$figure3_pathogen,
       AMR_CONFIG$burden_inputs$figure3_optimistic,
@@ -126,7 +209,7 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
   dir.create(AMR_CONFIG$output_dirs$slides, recursive = TRUE, showWarnings = FALSE)
 
   # Added exploratory_lagged to actually run the figure module
-  if (scenario %in% c("main", "main_binomial", "hic", "lmic", "hospital_nagorsen", "exploratory_lagged", "consumption_lagged")) {
+  if (scenario %in% c("main", "continuity", "continuity6", "continuity100", "main_2000", "raw_iqvia", "main_2000_plot", "main_finer", "main_binomial", "main_ppml", "hic", "hic_ppml", "lmic", "lmic_ppml", "hospital_nagorsen", "extra_pcs", "extra_pcs_ppml", "exploratory_lagged", "consumption_lagged", "consumption_lagged_ppml", "mi")) {
     message("[generate_figures] Running canonical figure module...")
     old_options <- options(
       amr_plot_pathogen_tag = plot_tags$pathogen_tag,
@@ -135,10 +218,21 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
     )
     on.exit(options(old_options), add = TRUE)
     source(AMR_CONFIG$canonical$figure_module)
-    write_figure_metadata("Figure1.pdf",
-      inputs = c(fig1_pathogen_input,
-                 fig1_class_bootstrap_input),
-      scenario = scenario)
+    if (scenario == "main_finer") {
+      write_figure_metadata("Figure1_finer_part1.pdf",
+        inputs = c(fig1_pathogen_input,
+                   fig1_class_bootstrap_input),
+        scenario = scenario)
+      write_figure_metadata("Figure1_finer_part2.pdf",
+        inputs = c(fig1_pathogen_input,
+                   fig1_class_bootstrap_input),
+        scenario = scenario)
+    } else {
+      write_figure_metadata("Figure1.pdf",
+        inputs = c(fig1_pathogen_input,
+                   fig1_class_bootstrap_input),
+        scenario = scenario)
+    }
     write_figure_metadata("Figure2.pdf",
       inputs = c(fig2_pathogen_input,
                  fig2_pathogen_bootstrap_input),
@@ -165,18 +259,35 @@ run_generate_figures_stage <- function(scenario = get_amr_scenario()) {
                    AMR_CONFIG$burden_inputs$figure4_use),
         scenario = scenario)
     }
-    # Supplementary Figure S1: pathogen elasticities HIC vs LMIC.
-    # Generated by plotting.R when both HIC and LMIC pathogen model CSVs exist.
+    # Supplementary Figure S1: class-level elasticities HIC vs LMIC.
+    # For main_ppml, use ppml-tagged subgroup inputs.
+    suppfig_s1_hic_suffix <- "HIC"
+    suppfig_s1_lmic_suffix <- "LMIC"
+    if (scenario == "main_ppml") {
+      suppfig_s1_hic_suffix <- "HIC_ppml"
+      suppfig_s1_lmic_suffix <- "LMIC_ppml"
+    }
+    suppfig_s1_hic_input <- paste0(
+      "Outputs/database_gradients_ATC3_PCA_canonical_weighted_",
+      suppfig_s1_hic_suffix,
+      ".csv"
+    )
+    suppfig_s1_lmic_input <- paste0(
+      "Outputs/database_gradients_ATC3_PCA_canonical_weighted_",
+      suppfig_s1_lmic_suffix,
+      ".csv"
+    )
+
     suppfig_s1_inputs_present <- warn_missing_inputs(c(
-      "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_HIC.csv",
-      "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_LMIC.csv"
+      suppfig_s1_hic_input,
+      suppfig_s1_lmic_input
     ), stage = "generate_figures")
     if (suppfig_s1_inputs_present) {
       write_figure_metadata(
         file.path(AMR_CONFIG$output_dirs$slides, "Supplementary_Figure_S1_Slide_narrow.pdf"),
         inputs = c(
-          "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_HIC.csv",
-          "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_LMIC.csv"
+          suppfig_s1_hic_input,
+          suppfig_s1_lmic_input
         ),
         scenario = scenario)
     }

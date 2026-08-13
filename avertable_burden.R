@@ -9,11 +9,29 @@ load_and_process_ihme_data <- function(
     ihme_pathogen_path = "IHME_AMR/IHME_AMR_PATHOGEN_2019_DATA_COUNTED_AB.CSV",
     pop_path = "population_by_country_and_year.csv",
     consumption_path = "antibiotic_consumption_by_ATC3.csv",
-    results_path =  "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_main.csv",
-    results_bootstrap_path = "Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_canonical_weighted_main.csv",
-    gradients_path = "Outputs/database_gradients_ATC3_PCA_canonical_weighted_all.csv",
-    gradients_bootstrap_path = "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_all.csv"
+    results_path = getOption(
+        "amr_burden_results_path",
+        "Outputs/database_gradients_pathogen_ATC3_PCA_canonical_weighted_main.csv"
+    ),
+    results_bootstrap_path = getOption(
+        "amr_burden_results_bootstrap_path",
+        "Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_canonical_weighted_main.csv"
+    ),
+    gradients_path = getOption(
+        "amr_burden_gradients_path",
+        "Outputs/database_gradients_ATC3_PCA_canonical_weighted_all.csv"
+    ),
+    gradients_bootstrap_path = getOption(
+        "amr_burden_gradients_bootstrap_path",
+        "Outputs/database_gradients_bootstraps_ATC3_PCA_canonical_weighted_all.csv"
+    )
 ) {
+  message("[burden] Using model outputs:")
+  message("  results_path: ", results_path)
+  message("  results_bootstrap_path: ", results_bootstrap_path)
+  message("  gradients_path: ", gradients_path)
+  message("  gradients_bootstrap_path: ", gradients_bootstrap_path)
+
   ## Load the results from the linear regression
   results <- read.csv(results_path)
   results_bootstrap <- read.csv(results_bootstrap_path)
@@ -247,10 +265,10 @@ for (location in unique(consumption$Location)) {
       if (length(drug_consumption) == 0) {
         next
       }
-      new_consumption <- max(0, drug_consumption - quota)
+      new_consumption <- max(drug_consumption*0.1, drug_consumption - quota)
       optimistic_df[optimistic_df$Pathogen == pathogen & optimistic_df$Location == location & optimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"] <-
         new_consumption / drug_consumption
-      quota <- quota - drug_consumption
+      quota <- quota - drug_consumption*0.9
       # print(paste("Processed antibiotic:", antibiotic, "Remaining quota:", quota))
     }
   }
@@ -265,11 +283,11 @@ for (location in unique(consumption$Location)) {
     if (length(drug_consumption) == 0) {
       next
     }
-    new_consumption <- max(0, drug_consumption - quota)
+    new_consumption <- max(drug_consumption*0.1, drug_consumption - quota)
     print(paste("Antibiotic:", antibiotic, "reduced to", (drug_consumption - new_consumption)/drug_consumption, "% in location:", location))
     optimistic_df[optimistic_df$Pathogen == "Overall" & optimistic_df$Location == location & optimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"] <-
       new_consumption / drug_consumption
-    quota <- quota - drug_consumption
+    quota <- quota - drug_consumption*0.9
   }
 }
 # write csv
@@ -303,10 +321,10 @@ for (location in unique(consumption$Location)) {
       if (length(drug_consumption) == 0) {
         next
       }
-      new_consumption <- max(0, drug_consumption - quota)
+      new_consumption <- max(drug_consumption*0.1, drug_consumption - quota)
       pessimistic_df[pessimistic_df$Pathogen == pathogen & pessimistic_df$Location == location & pessimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"] <-
         new_consumption / drug_consumption
-      quota <- quota - drug_consumption
+      quota <- quota - drug_consumption*0.9
       # print(paste("Processed antibiotic:", antibiotic, "Remaining quota:", quota))
     }
   }
@@ -321,11 +339,11 @@ for (location in unique(consumption$Location)) {
     if (length(drug_consumption) == 0) {
       next
     }
-    new_consumption <- max(0, drug_consumption - quota)
+    new_consumption <- max(drug_consumption*0.1, drug_consumption - quota)
     print(paste("Antibiotic:", antibiotic, "reduced by", (drug_consumption - new_consumption)/drug_consumption, "in location:", location))
     pessimistic_df[pessimistic_df$Pathogen == "Overall" & pessimistic_df$Location == location & pessimistic_df$Antibiotic == antibiotic, "ProportionateConsumption"] <-
       new_consumption / drug_consumption
-    quota <- quota - drug_consumption
+    quota <- quota - drug_consumption*0.9
   }
 }
 # write csv
@@ -434,12 +452,24 @@ compute_avertable_burden <- function(
     scenario_df,
     total_burden_by_region,
     n_bootstraps = 1000,
-    output_tag = "canonical_weighted_lower_region_v2"
+    output_tag = "canonical_weighted_lower_region",
+    save_outputs = TRUE,
+    elasticity_scale = 1,
+    filter_implausible_gradients = TRUE,
+    max_abs_gradient = 10,
+    enforce_positive_prob_filter = FALSE,
+    positive_prob_threshold = 0.0
 ) {
     set.seed(260116)
     lower_to_upper <- unique(iso3_ihme_mapping[, c("lower_ihme_region", "ihme_region")])
     n_rows <- nrow(IHME)
     primary_scenario_bootstraps  <- matrix(0, nrow = n_rows, ncol = n_bootstraps)
+    positivity_filter_applied_n <- 0L
+    positivity_filter_zeroed_n <- 0L
+    gradient_draws_total_n <- 0L
+    gradient_draws_removed_n <- 0L
+    gradient_rows_all_filtered_n <- 0L
+    drug_level_random_effects_bootstraps <- rep(0, n_bootstraps)
 
     for (i in seq_len(n_rows)) {
         if (i %% 5000 == 0) message("[burden] Row ", i, " of ", n_rows)
@@ -461,12 +491,51 @@ compute_avertable_burden <- function(
             results_bootstrap$Pathogen   == pathogen &
             results_bootstrap$Antibiotic == antibiotic, "Gradient"]
         if (length(path_boots) >= n_bootstraps) {
-            gradients <- sample(path_boots, n_bootstraps, replace = TRUE)
+            source_boots <- path_boots
+            used_drug_level_random_effects <- FALSE
         } else {
             class_boots <- gradients_bootstrap[
                 gradients_bootstrap$Antibiotic == antibiotic, "Gradient"]
             if (length(class_boots) == 0) next
-            gradients <- sample(class_boots, n_bootstraps, replace = TRUE)
+            source_boots <- class_boots
+            used_drug_level_random_effects <- TRUE
+        }
+
+        if (isTRUE(filter_implausible_gradients)) {
+            source_boots <- source_boots[!is.na(source_boots)]
+            total_before <- length(source_boots)
+            if (total_before == 0) next
+
+            filtered_boots <- source_boots[is.finite(source_boots)]
+            if (is.finite(max_abs_gradient) && max_abs_gradient > 0) {
+                filtered_boots <- filtered_boots[abs(filtered_boots) <= max_abs_gradient]
+            }
+
+            gradient_draws_total_n <- gradient_draws_total_n + total_before
+            gradient_draws_removed_n <- gradient_draws_removed_n + (total_before - length(filtered_boots))
+
+            if (length(filtered_boots) == 0) {
+                gradient_rows_all_filtered_n <- gradient_rows_all_filtered_n + 1L
+                next
+            }
+            source_boots <- filtered_boots
+        }
+
+        if (isTRUE(enforce_positive_prob_filter)) {
+            positivity_filter_applied_n <- positivity_filter_applied_n + 1L
+            pos_prob <- mean(source_boots > 0, na.rm = TRUE)
+            if (is.na(pos_prob) || pos_prob < positive_prob_threshold) {
+                gradients <- rep(0, n_bootstraps)
+                positivity_filter_zeroed_n <- positivity_filter_zeroed_n + 1L
+            } else {
+                gradients <- sample(source_boots, n_bootstraps, replace = TRUE)
+            }
+        } else {
+            gradients <- sample(source_boots, n_bootstraps, replace = TRUE)
+        }
+
+        if (!isTRUE(all.equal(elasticity_scale, 1))) {
+            gradients <- gradients * elasticity_scale
         }
 
         # Scenario burden
@@ -492,7 +561,60 @@ compute_avertable_burden <- function(
         } else {
             primary_scenario_bootstraps[i, ] <- value_gamma * (1 - exp(gradients * log(scenario_row)))
         }
+
+        if (isTRUE(used_drug_level_random_effects)) {
+            drug_level_random_effects_bootstraps <-
+                drug_level_random_effects_bootstraps + primary_scenario_bootstraps[i, ]
+        }
     }
+
+    if (isTRUE(enforce_positive_prob_filter)) {
+        message(
+            "[burden] Positive-sign filter active (threshold=", positive_prob_threshold,
+            "): zeroed ", positivity_filter_zeroed_n, " of ", positivity_filter_applied_n,
+            " pathogen-antibiotic-location rows."
+        )
+    }
+
+    if (isTRUE(filter_implausible_gradients)) {
+        pct_removed <- if (gradient_draws_total_n > 0) {
+            100 * gradient_draws_removed_n / gradient_draws_total_n
+        } else {
+            0
+        }
+        message(
+            "[burden] Implausible-gradient filter active (|gradient| <= ", max_abs_gradient,
+            "): removed ", gradient_draws_removed_n, " of ", gradient_draws_total_n,
+            " candidate bootstrap draws (", round(pct_removed, 3), "%), and dropped ",
+            gradient_rows_all_filtered_n, " IHME rows with no valid draws."
+        )
+    }
+
+    overall_avertable_burden_bootstraps <- colSums(primary_scenario_bootstraps)
+    overall_summary <- data.frame(
+        avertable_burden = mean(overall_avertable_burden_bootstraps),
+        lower_bound = quantile(overall_avertable_burden_bootstraps, 0.025),
+        upper_bound = quantile(overall_avertable_burden_bootstraps, 0.975),
+        stringsAsFactors = FALSE
+    )
+    message(
+        "[burden] Overall avertable burden: ",
+        round(overall_summary$avertable_burden[1], 2),
+        " (95% UI ",
+        round(overall_summary$lower_bound[1], 2),
+        " to ",
+        round(overall_summary$upper_bound[1], 2),
+        ")"
+    )
+    drug_level_random_effects_proportion <- if (mean(overall_avertable_burden_bootstraps) > 0) {
+        mean(drug_level_random_effects_bootstraps) / mean(overall_avertable_burden_bootstraps)
+    } else {
+        NA_real_
+    }
+    message(
+        "[burden] Proportion of overall avertable burden relying on drug-level random effects: ",
+        round(drug_level_random_effects_proportion, 4)
+    )
 
     # Helper: aggregate bootstrap matrix by a grouping vector
     aggregate_bootstraps <- function(boots, groups, group_vals, pop_df) {
@@ -548,9 +670,11 @@ compute_avertable_burden <- function(
     # Aggregate by region
     avertable_by_region <- aggregate_bootstraps(
         primary_scenario_bootstraps, IHME$location_name, regions, total_burden_by_region)
-    write.csv(avertable_by_region,
-        paste0("Outputs/10pc_avertable_burden_by_region_", output_tag, ".csv"),
-        row.names = FALSE)
+    if (isTRUE(save_outputs)) {
+        write.csv(avertable_by_region,
+            paste0("Outputs/10pc_avertable_burden_by_region_", output_tag, ".csv"),
+            row.names = FALSE)
+    }
 
     # Aggregate by pathogen (no population normalisation needed here)
     avertable_by_pathogen <- do.call(rbind, lapply(pathogens, function(p) {
@@ -562,9 +686,11 @@ compute_avertable_burden <- function(
                    upper_bound      = quantile(sums, 0.975),
                    stringsAsFactors = FALSE)
     }))
-    write.csv(avertable_by_pathogen,
-        paste0("Outputs/10pc_avertable_burden_by_pathogen_", output_tag, ".csv"),
-        row.names = FALSE)
+    if (isTRUE(save_outputs)) {
+        write.csv(avertable_by_pathogen,
+            paste0("Outputs/10pc_avertable_burden_by_pathogen_", output_tag, ".csv"),
+            row.names = FALSE)
+    }
     
     # Aggregate by drug (no population normalisation needed here)
     avertable_by_drug <- do.call(rbind, lapply(drugs, function(d) {
@@ -576,9 +702,11 @@ compute_avertable_burden <- function(
                    upper_bound      = quantile(sums, 0.975),
                    stringsAsFactors = FALSE)
     }))
-    write.csv(avertable_by_drug,
-        paste0("Outputs/10pc_avertable_burden_by_drug_", output_tag, ".csv"),
-        row.names = FALSE)
+    if (isTRUE(save_outputs)) {
+        write.csv(avertable_by_drug,
+            paste0("Outputs/10pc_avertable_burden_by_drug_", output_tag, ".csv"),
+            row.names = FALSE)
+    }
 
     # Aggregate by region x pathogen
     pairs_rp <- expand.grid(region = regions, pathogen = pathogens, stringsAsFactors = FALSE)
@@ -598,9 +726,11 @@ compute_avertable_burden <- function(
                    upper_bound_per_100k      = if (!is.na(pop) && pop > 0) quantile(sums, 0.975) / (pop / 1e5) else NA,
                    stringsAsFactors = FALSE)
     }))
-    write.csv(avertable_by_pathogen_and_region,
-        paste0("Outputs/10pc_avertable_burden_by_pathogen_and_region_", output_tag, ".csv"),
-        row.names = FALSE)
+    if (isTRUE(save_outputs)) {
+        write.csv(avertable_by_pathogen_and_region,
+            paste0("Outputs/10pc_avertable_burden_by_pathogen_and_region_", output_tag, ".csv"),
+            row.names = FALSE)
+    }
 
     # Aggregate by region x drug
     pairs_rd <- expand.grid(region = regions, drug = drugs, stringsAsFactors = FALSE)
@@ -620,16 +750,24 @@ compute_avertable_burden <- function(
                    upper_bound_per_100k      = if (!is.na(pop) && pop > 0) quantile(sums, 0.975) / (pop / 1e5) else NA,
                    stringsAsFactors = FALSE)
     }))
-    write.csv(avertable_by_drug_and_region,
-        paste0("Outputs/10pc_avertable_burden_by_drug_and_region_", output_tag, ".csv"),
-        row.names = FALSE)
+    if (isTRUE(save_outputs)) {
+        write.csv(avertable_by_drug_and_region,
+            paste0("Outputs/10pc_avertable_burden_by_drug_and_region_", output_tag, ".csv"),
+            row.names = FALSE)
+    }
 
-    message("[burden] compute_avertable_burden() complete. Output tag: ", output_tag)
+    if (isTRUE(save_outputs)) {
+        message("[burden] compute_avertable_burden() complete. Output tag: ", output_tag)
+    } else {
+        message("[burden] compute_avertable_burden() complete. Output writing skipped.")
+    }
     invisible(list(
+        overall_summary       = overall_summary,
         by_region             = avertable_by_region,
         by_pathogen           = avertable_by_pathogen,
         by_pathogen_and_region = avertable_by_pathogen_and_region,
-        by_drug_and_region    = avertable_by_drug_and_region
+        by_drug_and_region    = avertable_by_drug_and_region,
+        drug_level_random_effects_proportion = drug_level_random_effects_proportion
     ))
 }
 
@@ -641,6 +779,32 @@ compute_avertable_burden <- function(
 if (isTRUE(.amr_run_burden_toplevel)) {
     .burden_scenario  <- getOption("amr_scenario", "main")
     .n_boot <- if (isTRUE(getOption("amr_smoke_mode", FALSE))) 10L else 1000L
+    .pos_prob_threshold <- getOption("amr_burden_positive_prob_threshold", 0.0)
+    .filter_implausible_gradients <- getOption("amr_burden_filter_implausible_gradients", TRUE)
+    .max_abs_gradient <- getOption("amr_burden_max_abs_gradient", 10)
+    .elasticity_scale <- getOption("amr_burden_elasticity_scale", 1)
+    .is_main_burden <- identical(.burden_scenario, "main")
+    .tag_suffix <- gsub("[^A-Za-z0-9_]+", "_", .burden_scenario)
+    if (.burden_scenario %in% c("consumption_lagged", "consumption_lagged_ppml")) {
+        .custom_lag <- suppressWarnings(as.integer(Sys.getenv("AMR_LAG_N", unset = "1")))
+        if (is.na(.custom_lag) || .custom_lag < 1L) {
+            .custom_lag <- 1L
+        }
+        if (.custom_lag != 1L) {
+            .tag_suffix <- paste0(.tag_suffix, "_", .custom_lag, "y")
+        }
+    }
+    scenario_output_tag <- function(base_tag) {
+        if (.is_main_burden) {
+            base_tag
+        } else {
+            paste0(base_tag, "_", .tag_suffix)
+        }
+    }
+
+    if (!.is_main_burden) {
+        message("[burden] Non-main scenario '", .burden_scenario, "': canonical burden outputs will not be overwritten.")
+    }
 
   # Main scenario: uniform 10% reduction across antibiotic classes.
   main_uniform_df <- expand.grid(
@@ -651,15 +815,19 @@ if (isTRUE(.amr_run_burden_toplevel)) {
   )
   main_uniform_df$ProportionateConsumption <- 0.9
 
-    if (.burden_scenario %in% c("main", "burden_lower_region")) {
-        compute_avertable_burden(
+    if (.burden_scenario == "main") {
+        main_result <- compute_avertable_burden(
             IHME                   = IHME,
             results_bootstrap      = results_bootstrap,
             gradients_bootstrap    = gradients_bootstrap,
             scenario_df            = main_uniform_df,
             total_burden_by_region = total_burden_by_region,
             n_bootstraps           = .n_boot,
-            output_tag             = "canonical_weighted_lower_region_v2"
+            output_tag             = scenario_output_tag("canonical_weighted_lower_region_v2"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient
         )
         # Optimistic scenario (reduce highest-gradient drugs first) — upper-region IHME
         compute_avertable_burden(
@@ -669,7 +837,13 @@ if (isTRUE(.amr_run_burden_toplevel)) {
             scenario_df            = optimistic_df,
             total_burden_by_region = total_burden_by_region_upper,
             n_bootstraps           = .n_boot,
-            output_tag             = "canonical_weighted_upper_region_optimistic_overall"
+            output_tag             = scenario_output_tag("canonical_weighted_upper_region_optimistic_overall"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient,
+            enforce_positive_prob_filter = TRUE,
+            positive_prob_threshold = .pos_prob_threshold
         )
         # Pessimistic scenario (reduce lowest-gradient drugs first) — upper-region IHME
         compute_avertable_burden(
@@ -679,44 +853,107 @@ if (isTRUE(.amr_run_burden_toplevel)) {
             scenario_df            = pessimistic_df,
             total_burden_by_region = total_burden_by_region_upper,
             n_bootstraps           = .n_boot,
-            output_tag             = "canonical_weighted_upper_region_pessimistic_overall"
+            output_tag             = scenario_output_tag("canonical_weighted_upper_region_pessimistic_overall"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient
         )
+        print(main_result$overall_summary)
+    }
+
+    model_scenarios <- c(
+        "continuity", "main_finer", "main_binomial", "main_ppml", "main_2000",
+        "hic", "hic_ppml", "lmic", "lmic_ppml", "raw_iqvia", "hospital_nagorsen",
+        "exploratory_lagged", "consumption_lagged", "consumption_lagged_ppml",
+        "extra_pcs", "extra_pcs_ppml", "mi", "scale_up", "scale_down",
+        "permutation", "permutations_ppml"
+    )
+    if (.burden_scenario %in% model_scenarios) {
+        main_result <- compute_avertable_burden(
+            IHME                   = IHME,
+            results_bootstrap      = results_bootstrap,
+            gradients_bootstrap    = gradients_bootstrap,
+            scenario_df            = main_uniform_df,
+            total_burden_by_region = total_burden_by_region,
+            n_bootstraps           = .n_boot,
+            output_tag             = scenario_output_tag("canonical_weighted_lower_region_v2"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient
+        )
+        print(main_result$overall_summary)
+    }
+
+    if (.burden_scenario == "burden_lower_region") {
+        lower_region_result <- compute_avertable_burden(
+            IHME                   = IHME,
+            results_bootstrap      = results_bootstrap,
+            gradients_bootstrap    = gradients_bootstrap,
+            scenario_df            = main_uniform_df,
+            total_burden_by_region = total_burden_by_region,
+            n_bootstraps           = .n_boot,
+            output_tag             = scenario_output_tag("canonical_weighted_lower_region_v2"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient
+        )
+        print(lower_region_result$overall_summary)
     }
 
     if (.burden_scenario %in% c("burden_upper_region", "burden_optimistic")) {
-        compute_avertable_burden(
+        optimistic_result <- compute_avertable_burden(
             IHME                   = IHME_upper,
             results_bootstrap      = results_bootstrap,
             gradients_bootstrap    = gradients_bootstrap,
             scenario_df            = optimistic_df,
             total_burden_by_region = total_burden_by_region_upper,
             n_bootstraps           = .n_boot,
-            output_tag             = "canonical_weighted_upper_region_optimistic_overall"
+            output_tag             = scenario_output_tag("canonical_weighted_upper_region_optimistic_overall"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient,
+            enforce_positive_prob_filter = TRUE,
+            positive_prob_threshold = .pos_prob_threshold
         )
+        print(optimistic_result$overall_summary)
     }
 
     if (.burden_scenario %in% c("burden_drug_region", "burden_pathogen_region")) {
-        compute_avertable_burden(
+        region_result <- compute_avertable_burden(
             IHME                   = IHME_upper,
             results_bootstrap      = results_bootstrap,
             gradients_bootstrap    = gradients_bootstrap,
             scenario_df            = main_uniform_df,
             total_burden_by_region = total_burden_by_region_upper,
             n_bootstraps           = .n_boot,
-            output_tag             = "canonical_weighted_upper_region_main_overall"
+            output_tag             = scenario_output_tag("canonical_weighted_upper_region_main_overall"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient
         )
+        print(region_result$overall_summary)
     }
 
     if (.burden_scenario == "burden_pessimistic") {
-        compute_avertable_burden(
+        pessimistic_result <- compute_avertable_burden(
             IHME                   = IHME_upper,
             results_bootstrap      = results_bootstrap,
             gradients_bootstrap    = gradients_bootstrap,
             scenario_df            = pessimistic_df,
             total_burden_by_region = total_burden_by_region_upper,
             n_bootstraps           = .n_boot,
-            output_tag             = "canonical_weighted_upper_region_pessimistic_overall"
+            output_tag             = scenario_output_tag("canonical_weighted_upper_region_pessimistic_overall"),
+            save_outputs           = TRUE,
+            elasticity_scale       = .elasticity_scale,
+            filter_implausible_gradients = .filter_implausible_gradients,
+            max_abs_gradient       = .max_abs_gradient
         )
+        print(pessimistic_result$overall_summary)
     }
 
     message("[burden] Burden estimation complete. Intermediate CSVs written to Outputs/.")

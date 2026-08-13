@@ -98,7 +98,21 @@ source("utils.R")
 df.pc$ISO3 <- iso3_ihme_mapping$iso3[match(df.pc$Country, iso3_ihme_mapping$country_name)]
 write.csv(df.pc, "Chungman/pcato10.csv", row.names = FALSE)
 
+# print correlation with year, gdp
+cor_year <- cor(df.pc$Year, df.pc[, c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10")], use = "complete.obs")
+cor_gdp <- cor(df.pc$GDP, df.pc[, c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10")], use = "complete.obs")
+print(cor_year)
+print(cor_gdp)
 
+# write csv tables of all variables and weightings for each of the first 10 PCs, in separate files
+for (i in 1:10) {
+  pc_loadings <- pca.results[[1]]$rotation[, i]
+  pc_df <- data.frame(Variable = names(pc_loadings),
+                      Loading = signif(pc_loadings, 5))
+  pc_df <- pc_df[order(abs(pc_df$Loading), decreasing = TRUE), ]
+  write.table(pc_df, paste0("Chungman/pc", i, "_loadings.txt"),
+              row.names = FALSE, sep = ";", quote = FALSE)
+}
 
 # # what proportion of variance is explained by PC1, PC2, and PC3?
 # variance_explained <- summary(pca.results[[1]])$importance[2, 1:3]  # Proportion of variance explained by PC1, PC2, and PC3

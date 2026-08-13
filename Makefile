@@ -163,7 +163,7 @@ permutation-models:
 	@echo "[permutation] Running permutation models for all 7 antibiotic classes..."
 	@for ab in J01A J01C J01D J01E J01F J01G J01M; do \
 	  echo "[permutation] Class: $$ab"; \
-	  ANALYSIS_SCENARIO=permutation AMR_PERMUTATION_CLASS=$$ab $(R) scripts/run_fit_models.R || exit 1; \
+	  ANALYSIS_SCENARIO=permutation AMR_PERMUTATION_CLASS=$$ab AMR_DEV_SMOKE=0 AMR_SMOKE=0 $(R) scripts/run_fit_models.R || exit 1; \
 	done
 	@echo "[permutation] All permutation models complete."
 
@@ -194,7 +194,7 @@ supplementary: models-hic models-lmic models-nagorsen models-iqvia \
 	@echo ""
 
 all-scenarios:
-	@for s in main hic lmic raw_iqvia hospital_nagorsen burden_optimistic burden_pessimistic burden_lower_region burden_upper_region burden_drug_region burden_pathogen_region; do \
+	@for s in main hic lmic raw_iqvia hospital_nagorsen burden_optimistic burden_pessimistic burden_lower_region burden_upper_region burden_drug_region burden_pathogen_region scale_up scale_down; do \
 	  echo "Running manuscript workflow for $$s"; \
 	  $(MAKE) manuscript SCENARIO=$$s || exit 1; \
 	done

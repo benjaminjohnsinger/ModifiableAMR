@@ -113,8 +113,71 @@ prepare_main_regression_data <- function(
     no_covariates_path = "summed_data_new_no_covariates.csv",
     output_path = "summed_data_new.csv",
     sums_output_path = "summed_data_sums_new.csv",
-    year_cutoff = 2018
+    year_cutoff = 2018,
+    class_mode = c("atc_class", "specific_abs")
 ) {
+  class_mode <- match.arg(class_mode)
+
+  load_consumption_data <- function(path) {
+    consumption_raw <- read.csv(path, stringsAsFactors = FALSE)
+
+    # Standard global-use format (DDD per 1,000/day by country name).
+    if (all(c("Location", "Year", "ATC.level.3.class", "Antibiotic.consumption..DDD.1.000.day.") %in% names(consumption_raw))) {
+      consumption_raw$ATC.level.3.class <- substr(consumption_raw$ATC.level.3.class, 1, 4)
+      consumption <- consumption_raw %>%
+        rename(
+          ISO3 = Location,
+          Antibiotic = ATC.level.3.class,
+          Consumption = Antibiotic.consumption..DDD.1.000.day.
+        ) %>%
+        mutate(
+          ISO3 = iso3_ihme_mapping$iso3[match(ISO3, iso3_ihme_mapping$country_name)],
+          Year = as.character(Year)
+        )
+    } else if (all(c("ISO3", "Year", "Antibiotic", "Consumption") %in% names(consumption_raw))) {
+      # Already harmonized format.
+      consumption <- consumption_raw %>%
+        mutate(
+          Antibiotic = substr(Antibiotic, 1, 4),
+          Year = as.character(Year)
+        )
+    } else if (all(c("ISO3", "Year", "Antimicrobial", "DDD") %in% names(consumption_raw))) {
+      # Raw IQVIA format: map antimicrobial names to ATC classes then aggregate.
+      consumption_raw$Antibiotic <- vapply(
+        consumption_raw$Antimicrobial,
+        function(x) {
+          class <- get_atc_class(x)
+          if (is.na(class)) NA_character_ else class
+        },
+        character(1)
+      )
+      unmapped <- sort(unique(consumption_raw$Antimicrobial[is.na(consumption_raw$Antibiotic)]))
+      if (length(unmapped) > 0) {
+        message("[data_processing] raw IQVIA antimicrobials not mapped to ATC and excluded: ",
+                paste(unmapped, collapse = ", "))
+      }
+
+      consumption <- consumption_raw %>%
+        filter(!is.na(Antibiotic)) %>%
+        mutate(Year = as.character(Year)) %>%
+        group_by(ISO3, Year, Antibiotic) %>%
+        summarise(Consumption = sum(DDD, na.rm = TRUE), .groups = "drop")
+    } else {
+      stop(
+        "[data_processing] unsupported consumption schema in ", path,
+        ". Expected one of: ",
+        "(Location, Year, ATC.level.3.class, Antibiotic.consumption..DDD.1.000.day.), ",
+        "(ISO3, Year, Antibiotic, Consumption), or ",
+        "(ISO3, Year, Antimicrobial, DDD).",
+        call. = FALSE
+      )
+    }
+
+    consumption %>%
+      group_by(ISO3, Year, Antibiotic) %>%
+      summarise(Consumption = sum(Consumption, na.rm = TRUE), .groups = "drop")
+  }
+
   ## Merge Joe's data with ATLAS and GASP data
   JOE <- read.csv(joe_path)
   ATLAS <- read.csv(atlas_path)
@@ -125,8 +188,48 @@ prepare_main_regression_data <- function(
   # remove duplicated rows
   ATLAS <- ATLAS[!duplicated(ATLAS), ]
 
-  JOE <- JOE[,c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
-  ATLAS <- ATLAS[,c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
+  if (class_mode == "specific_abs") {
+    map_antibiotic_group <- function(x) {
+      x <- trimws(as.character(x))
+      out <- rep(NA_character_, length(x))
+      mapping_names <- names(antibiotic_mapping)
+
+      # Joe data typically already has standardized values at mapping-name level.
+      idx_name <- match(x, mapping_names)
+      out[!is.na(idx_name)] <- x[!is.na(idx_name)]
+
+      # ATLAS data contains specific drugs; map these to standardized groups.
+      for (group_name in mapping_names) {
+        mapped_values <- antibiotic_mapping[[group_name]]
+        if (length(mapped_values) == 0) {
+          next
+        }
+        idx <- is.na(out) & x %in% mapped_values
+        out[idx] <- group_name
+      }
+
+      out
+    }
+
+    JOE <- JOE[, c("ISO3", "Year", "Pathogen", "ATC.Class", "Antibiotic_standardized", "Percent.Resistant.Isolates", "Total.Isolates")]
+    ATLAS <- ATLAS[, c("ISO3", "Year", "Pathogen", "ATC.Class", "Antibiotic", "Percent.Resistant.Isolates", "Total.Isolates")]
+
+    JOE$Antibiotic <- map_antibiotic_group(JOE$Antibiotic_standardized)
+    ATLAS$Antibiotic <- map_antibiotic_group(ATLAS$Antibiotic)
+
+    joe_unmapped <- sum(is.na(JOE$Antibiotic))
+    atlas_unmapped <- sum(is.na(ATLAS$Antibiotic))
+    if (joe_unmapped > 0 || atlas_unmapped > 0) {
+      message("[data_processing] specific_abs unmapped antibiotics removed: Joe=", joe_unmapped,
+              ", ATLAS=", atlas_unmapped)
+    }
+
+    JOE <- JOE[!is.na(JOE$Antibiotic), c("ISO3", "Year", "Pathogen", "ATC.Class", "Antibiotic", "Percent.Resistant.Isolates", "Total.Isolates")]
+    ATLAS <- ATLAS[!is.na(ATLAS$Antibiotic), c("ISO3", "Year", "Pathogen", "ATC.Class", "Antibiotic", "Percent.Resistant.Isolates", "Total.Isolates")]
+  } else {
+    JOE <- JOE[, c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
+    ATLAS <- ATLAS[, c("ISO3", "Year", "Pathogen", "ATC.Class", "Percent.Resistant.Isolates", "Total.Isolates")]
+  }
 
   # Coerce to numeric in case any source file reads them as character
   JOE$Percent.Resistant.Isolates <- as.numeric(JOE$Percent.Resistant.Isolates)
@@ -134,19 +237,35 @@ prepare_main_regression_data <- function(
   ATLAS$Percent.Resistant.Isolates <- as.numeric(ATLAS$Percent.Resistant.Isolates)
   ATLAS$Total.Isolates <- as.numeric(ATLAS$Total.Isolates)
 
-  # within each dataset, if there are rows with the same ISO3, Year, Pathogen, ATC.Class, and Total.Isolates, combine Percent.Resistant.Isolates using independent probabilities formula
-  JOE <- JOE %>%
-    group_by(ISO3, Year, Pathogen, ATC.Class, Total.Isolates) %>%
-    summarise(
-      Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
-      .groups = "drop"
-    )
-  ATLAS <- ATLAS %>%
-    group_by(ISO3, Year, Pathogen, ATC.Class, Total.Isolates) %>%
-    summarise(
-      Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
-      .groups = "drop"
-    )
+  # within each dataset, if there are rows with the same ISO3, Year, Pathogen, class and Total.Isolates,
+  # combine Percent.Resistant.Isolates with independent-probabilities formula.
+  if (class_mode == "specific_abs") {
+    JOE <- JOE %>%
+      group_by(ISO3, Year, Pathogen, ATC.Class, Antibiotic, Total.Isolates) %>%
+      summarise(
+        Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
+        .groups = "drop"
+      )
+    ATLAS <- ATLAS %>%
+      group_by(ISO3, Year, Pathogen, ATC.Class, Antibiotic, Total.Isolates) %>%
+      summarise(
+        Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
+        .groups = "drop"
+      )
+  } else {
+    JOE <- JOE %>%
+      group_by(ISO3, Year, Pathogen, ATC.Class, Total.Isolates) %>%
+      summarise(
+        Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
+        .groups = "drop"
+      )
+    ATLAS <- ATLAS %>%
+      group_by(ISO3, Year, Pathogen, ATC.Class, Total.Isolates) %>%
+      summarise(
+        Percent.Resistant.Isolates = (1 - prod(1 - Percent.Resistant.Isolates / 100)) * 100,
+        .groups = "drop"
+      )
+  }
 
   # Merge datasets
   merged_data <- rbind(JOE, ATLAS)
@@ -168,22 +287,10 @@ prepare_main_regression_data <- function(
   # Remove rows with N. gonorrheae - not subject to same bystander exposures as other pathogens
   merged_data <- merged_data[!grepl("gonorrhoeae", tolower(merged_data$Pathogen)), ]
 
-  # Load GRAM consumption data
-  consumption <- read.csv(consumption_path)
-  # Extract the first 4 characters of ATC.level.3.class to get the ATC class
-  consumption$ATC.level.3.class <- substr(consumption$ATC.level.3.class, 1, 4)
-  # rename columns ("Location","Year","ATC level 3 class","Antibiotic consumption (DDD/1,000/day)") in consumption data and map country names onto ISO3
-  consumption <- consumption %>%
-    rename(ISO3 = Location, Year = Year, Antibiotic = ATC.level.3.class, Consumption = Antibiotic.consumption..DDD.1.000.day.) %>%
-    mutate(ISO3 = iso3_ihme_mapping$iso3[match(ISO3, iso3_ihme_mapping$country_name)])
-
-  consumption <- consumption %>%
-    group_by(ISO3, Year, Antibiotic) %>%
-    summarise(Consumption = sum(Consumption, na.rm = TRUE),
-              .groups = "drop")
+  # Load consumption data from standard ATC3 format, harmonized format, or raw IQVIA DDD format.
+  consumption <- load_consumption_data(consumption_path)
 
   # Safely merge the aggregated data
-  consumption$Year <- as.character(consumption$Year)
   merged_data <- merged_data %>%
     left_join(consumption,
               by = c("ISO3" = "ISO3", "Year" = "Year",
@@ -240,7 +347,160 @@ prepare_main_regression_data <- function(
           sum(complete.cases(merged_data)), " complete cases)")
 
   merged_data_sums <- merged_data %>%
-    group_by(Pathogen, ATC.Class) %>%
+    {
+      if (class_mode == "specific_abs") {
+        group_by(., Pathogen, Antibiotic) %>%
+          summarise(
+            ATC.Class = paste(sort(unique(ATC.Class)), collapse = "|"),
+            Total.Isolates = sum(Total.Isolates, na.rm = TRUE),
+            Percent.Resistant.Isolates = mean(Percent.Resistant.Isolates, na.rm = TRUE),
+            Antibiotic.Consumption = mean(Antibiotic.Consumption, na.rm = TRUE),
+            PC1 = mean(PC1, na.rm = TRUE),
+            PC2 = mean(PC2, na.rm = TRUE),
+            PC3 = mean(PC3, na.rm = TRUE),
+            PC4 = mean(PC4, na.rm = TRUE),
+            PC5 = mean(PC5, na.rm = TRUE),
+            PC6 = mean(PC6, na.rm = TRUE),
+            PC7 = mean(PC7, na.rm = TRUE),
+            PC8 = mean(PC8, na.rm = TRUE),
+            PC9 = mean(PC9, na.rm = TRUE),
+            PC10 = mean(PC10, na.rm = TRUE),
+            GDP = mean(GDP, na.rm = TRUE),
+            .groups = "drop"
+          )
+      } else {
+        group_by(., Pathogen, ATC.Class) %>%
+          summarise(
+            Total.Isolates = sum(Total.Isolates, na.rm = TRUE),
+            Percent.Resistant.Isolates = mean(Percent.Resistant.Isolates, na.rm = TRUE),
+            Antibiotic.Consumption = mean(Antibiotic.Consumption, na.rm = TRUE),
+            PC1 = mean(PC1, na.rm = TRUE),
+            PC2 = mean(PC2, na.rm = TRUE),
+            PC3 = mean(PC3, na.rm = TRUE),
+            PC4 = mean(PC4, na.rm = TRUE),
+            PC5 = mean(PC5, na.rm = TRUE),
+            PC6 = mean(PC6, na.rm = TRUE),
+            PC7 = mean(PC7, na.rm = TRUE),
+            PC8 = mean(PC8, na.rm = TRUE),
+            PC9 = mean(PC9, na.rm = TRUE),
+            PC10 = mean(PC10, na.rm = TRUE),
+            GDP = mean(GDP, na.rm = TRUE),
+            .groups = "drop"
+          )
+      }
+    } %>%
+    ungroup()
+  # save the merged data with sums
+  write.csv(merged_data_sums, sums_output_path, row.names = FALSE)
+  message("[data_processing] wrote ", sums_output_path, " (",
+          nrow(merged_data_sums), " pathogen-class combinations)")
+}
+
+prepare_main_finer_regression_data <- function(
+    finer_data_path = "finer_data_new.csv",
+    consumption_path = "antibiotic_consumption_by_ATC3.csv",
+    pca_path = "Chungman/Chungman_pca_renamed.csv",
+    no_covariates_path = "finer_data_new_no_covariates.csv",
+    output_path = "finer_data_new.csv",
+    sums_output_path = "finer_data_sums_new.csv",
+    year_cutoff = 2018
+) {
+  merged_data <- read.csv(finer_data_path)
+
+  required_cols <- c("ISO3", "Year", "Pathogen", "ATC.Class", "Antibiotic", "Total.Isolates", "Percent.Resistant.Isolates")
+  missing_cols <- setdiff(required_cols, names(merged_data))
+  if (length(missing_cols) > 0) {
+    stop(
+      "[data_processing] finer data is missing required columns: ",
+      paste(missing_cols, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  merged_data <- merged_data %>%
+    mutate(
+      Year = as.character(Year),
+      Total.Isolates = as.numeric(Total.Isolates),
+      Percent.Resistant.Isolates = as.numeric(Percent.Resistant.Isolates)
+    )
+
+  # Harmonize finer aminoglycoside labels before any filtering or summarization.
+  merged_data <- merged_data %>%
+    mutate(
+      Antibiotic = case_when(
+        Antibiotic %in% c("Aminoglycosides", "Aminoglycosides (high-level)") ~ "Other aminoglycosides",
+        TRUE ~ Antibiotic
+      )
+    )
+
+  merged_data <- merged_data[!merged_data$ATC.Class %in% c("Total", "Other", "J01X"), ]
+  merged_data <- merged_data[as.numeric(merged_data$Year) <= year_cutoff, ]
+  merged_data <- merged_data[merged_data$ISO3 != "HKG", ]
+  merged_data <- merged_data[!grepl("gonorrhoeae", tolower(merged_data$Pathogen)), ]
+
+  consumption <- read.csv(consumption_path)
+  consumption$ATC.level.3.class <- substr(consumption$ATC.level.3.class, 1, 4)
+  consumption <- consumption %>%
+    rename(
+      ISO3 = Location,
+      Year = Year,
+      ATC.Class = ATC.level.3.class,
+      Consumption = Antibiotic.consumption..DDD.1.000.day.
+    ) %>%
+    mutate(ISO3 = iso3_ihme_mapping$iso3[match(ISO3, iso3_ihme_mapping$country_name)])
+
+  consumption <- consumption %>%
+    group_by(ISO3, Year, ATC.Class) %>%
+    summarise(Consumption = sum(Consumption, na.rm = TRUE), .groups = "drop")
+
+  consumption$Year <- as.character(consumption$Year)
+
+  merged_data <- merged_data %>%
+    left_join(consumption, by = c("ISO3", "Year", "ATC.Class")) %>%
+    rename(Antibiotic.Consumption = Consumption)
+
+  wide_consumption <- consumption %>%
+    pivot_wider(
+      names_from = ATC.Class,
+      values_from = Consumption,
+      names_glue = "{ATC.Class}.Consumption"
+    )
+
+  merged_data <- merged_data %>%
+    left_join(wide_consumption, by = c("ISO3", "Year")) %>%
+    mutate(
+      across(
+        ends_with(".Consumption") & !matches("^Antibiotic\\.Consumption$"),
+        ~ ifelse(paste0(ATC.Class, ".Consumption") == cur_column(), NA_real_, .x)
+      )
+    )
+
+  write.csv(merged_data, no_covariates_path, row.names = FALSE)
+
+  df.pc <- read.csv(pca_path)
+  merged_data$key_pca <- paste(merged_data$ISO3, merged_data$Year, sep = "|")
+  df.pc$key_pca <- paste(df.pc$ISO3, df.pc$Year, sep = "|")
+
+  idx_pca <- match(merged_data$key_pca, df.pc$key_pca)
+  merged_data$PC1 <- df.pc$PC1[idx_pca]
+  merged_data$PC2 <- df.pc$PC2[idx_pca]
+  merged_data$PC3 <- df.pc$PC3[idx_pca]
+  merged_data$PC4 <- df.pc$PC4[idx_pca]
+  merged_data$PC5 <- df.pc$PC5[idx_pca]
+  merged_data$PC6 <- df.pc$PC6[idx_pca]
+  merged_data$PC7 <- df.pc$PC7[idx_pca]
+  merged_data$PC8 <- df.pc$PC8[idx_pca]
+  merged_data$PC9 <- df.pc$PC9[idx_pca]
+  merged_data$PC10 <- df.pc$PC10[idx_pca]
+  merged_data$GDP <- df.pc$GDP[idx_pca]
+  merged_data$key_pca <- NULL
+  df.pc$key_pca <- NULL
+
+  write.csv(merged_data, output_path, row.names = FALSE)
+  message("[data_processing] wrote ", output_path, " (rows=", nrow(merged_data), ")")
+
+  merged_data_sums <- merged_data %>%
+    group_by(Pathogen, Antibiotic, ATC.Class) %>%
     summarise(
       Total.Isolates = sum(Total.Isolates, na.rm = TRUE),
       Percent.Resistant.Isolates = mean(Percent.Resistant.Isolates, na.rm = TRUE),
@@ -255,11 +515,11 @@ prepare_main_regression_data <- function(
       PC8 = mean(PC8, na.rm = TRUE),
       PC9 = mean(PC9, na.rm = TRUE),
       PC10 = mean(PC10, na.rm = TRUE),
-      GDP = mean(GDP, na.rm = TRUE)
+      GDP = mean(GDP, na.rm = TRUE),
+      .groups = "drop"
     ) %>%
     ungroup()
-  # save the merged data with sums
+
   write.csv(merged_data_sums, sums_output_path, row.names = FALSE)
-  message("[data_processing] wrote ", sums_output_path, " (",
-          nrow(merged_data_sums), " pathogen-class combinations)")
+  message("[data_processing] wrote ", sums_output_path, " (", nrow(merged_data_sums), " pathogen-antibiotic combinations)")
 }

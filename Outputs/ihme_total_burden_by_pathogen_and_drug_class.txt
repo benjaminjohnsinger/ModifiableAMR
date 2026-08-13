@@ -1,0 +1,20 @@
+pathogen	J01D	J01M	J01C	J01G	J01E	J01F
+Acinetobacter spp.	135730	80039	28241	20847	0	0
+Citrobacter spp.	10940	5024	4349	821	0	0
+E. coli	178705	111947	63683	23431	60310	0
+E. faecalis	0	53591	0	0	0	0
+E. faecium	0	74313	0	0	0	0
+Enterobacter spp.	41303	15610	19892	6143	9298	0
+Enterococcus spp.	0	24474	0	0	0	0
+H. influenzae	4948	0	8580	0	0	0
+K. pneumoniae	211602	58043	15868	52680	46969	0
+Morganella spp.	643	854	0	0	0	0
+P. aeruginosa	105853	36625	20619	6010	0	0
+Proteus spp.	9464	5944	2659	1774	3235	0
+S. agalactiae	0	23006	1599	0	0	27058
+S. aureus	0	31810	242159	0	37336	39219
+S. pneumoniae	90497	22346	28789	0	77446	25038
+S. pyogenes	0	0	0	0	0	7266
+Salmonella spp.	0	53684	0	0	0	0
+Serratia spp.	12315	2164	4966	1906	0	0
+Shigella spp.	0	11979	0	0	0	0

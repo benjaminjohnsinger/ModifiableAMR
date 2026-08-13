@@ -1,0 +1,134 @@
+"region","pathogen","avertable_burden","lower_bound","upper_bound","avertable_burden_per_100k","lower_bound_per_100k","upper_bound_per_100k"
+"Central Europe, Eastern Europe, and Central Asia","Acinetobacter spp.",0,0,0,0,0,0
+"High-income","Acinetobacter spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Acinetobacter spp.",0,0,0,0,0,0
+"North Africa and Middle East","Acinetobacter spp.",419.733342700564,-296.324154873166,899.706615492468,0.0668881280960326,-0.047221809688931,0.143376008583717
+"South Asia","Acinetobacter spp.",5.01145627625668,-3.51994592492587,14.0116566144575,0.000276018928897055,-0.000193870134830211,0.000771728263722322
+"Southeast Asia, East Asia, and Oceania","Acinetobacter spp.",1108.25971518375,-1173.5422469558,2896.33538337863,0.0476913660959102,-0.050500647241614,0.124637022543354
+"Sub-Saharan Africa","Acinetobacter spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","E. coli",-164.16392539176,-1139.75838991951,457.261976570101,-0.0399496426042278,-0.277362643612442,0.111275680676403
+"High-income","E. coli",0,0,0,0,0,0
+"Latin America and Caribbean","E. coli",-189.905117682682,-1095.99245229042,452.297433730558,-0.0298909433033119,-0.172508506627034,0.0711913249776865
+"North Africa and Middle East","E. coli",54.7535980108995,-915.851952383572,543.375366456326,0.00872545805846173,-0.145948907260713,0.0865915509163826
+"South Asia","E. coli",-616.75801559005,-2939.59571133167,755.57224162834,-0.033969544473208,-0.16190584431043,0.0416150973573653
+"Southeast Asia, East Asia, and Oceania","E. coli",-99.0051277700725,-2993.76876708733,1450.61712917348,-0.00426045423213098,-0.128829840444025,0.0624239170878282
+"Sub-Saharan Africa","E. coli",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","E. faecalis",0,0,0,0,0,0
+"High-income","E. faecalis",0,0,0,0,0,0
+"Latin America and Caribbean","E. faecalis",0,0,0,0,0,0
+"North Africa and Middle East","E. faecalis",0,0,0,0,0,0
+"South Asia","E. faecalis",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","E. faecalis",0,0,0,0,0,0
+"Sub-Saharan Africa","E. faecalis",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Enterobacter spp.",25.9511853042722,-39.5777271163379,73.973246509751,0.00631527648713129,-0.00963132460199267,0.0180015478631295
+"High-income","Enterobacter spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Enterobacter spp.",51.1310125053614,-57.9579007754063,132.905554700548,0.0080479884612297,-0.009122536281257,0.0209192487739449
+"North Africa and Middle East","Enterobacter spp.",130.079273809349,14.7487062211144,213.418766670854,0.0207292541336315,0.00235033353467092,0.0340101210719427
+"South Asia","Enterobacter spp.",86.8908086085795,-92.7442253557304,231.442368919055,0.00478573624133336,-0.00510812832297065,0.0127472876642859
+"Southeast Asia, East Asia, and Oceania","Enterobacter spp.",486.010021498655,-273.247589431565,998.933247364326,0.0209143051434749,-0.0117585712481168,0.0429867571226566
+"Sub-Saharan Africa","Enterobacter spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Enterococcus spp.",0,0,0,0,0,0
+"High-income","Enterococcus spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Enterococcus spp.",0,0,0,0,0,0
+"North Africa and Middle East","Enterococcus spp.",0,0,0,0,0,0
+"South Asia","Enterococcus spp.",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","Enterococcus spp.",0,0,0,0,0,0
+"Sub-Saharan Africa","Enterococcus spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","K. pneumoniae",113.710033196999,-385.810244944022,470.449134614743,0.0276715799521384,-0.0938877488570144,0.114484803811048
+"High-income","K. pneumoniae",0,0,0,0,0,0
+"Latin America and Caribbean","K. pneumoniae",131.775060098566,-498.380945733258,549.498340302839,0.0207413096511615,-0.078444840108289,0.0864906851151912
+"North Africa and Middle East","K. pneumoniae",982.666968796152,305.645577433657,1473.9099168456,0.156596456363648,0.0487072587653657,0.234880256797499
+"South Asia","K. pneumoniae",478.654322551861,-1676.85944698954,1879.27608088886,0.026363126033576,-0.0923573753724701,0.103505995533948
+"Southeast Asia, East Asia, and Oceania","K. pneumoniae",1425.23897190593,-1429.14290980137,2946.29456964698,0.0613318274156112,-0.0614998242568178,0.126786899336253
+"Sub-Saharan Africa","K. pneumoniae",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","P. aeruginosa",0,0,0,0,0,0
+"High-income","P. aeruginosa",0,0,0,0,0,0
+"Latin America and Caribbean","P. aeruginosa",0,0,0,0,0,0
+"North Africa and Middle East","P. aeruginosa",239.173363856713,166.698148671464,314.547771344765,0.0381143382507489,0.0265647876577269,0.0501259001409371
+"South Asia","P. aeruginosa",2.18163522771918,0.951665395406411,3.70151423468036,0.000120159208342715,5.24154354798996e-05,0.000203870479563842
+"Southeast Asia, East Asia, and Oceania","P. aeruginosa",273.999952564529,156.080881102358,383.169908828645,0.0117909474367661,0.0067165758524306,0.0164888213011096
+"Sub-Saharan Africa","P. aeruginosa",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Proteus spp.",11.1034942763333,-19.8178926062871,33.3426873034815,0.00270205909696081,-0.00482272658198679,0.00811401431867481
+"High-income","Proteus spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Proteus spp.",16.3051798663425,-22.1942135732097,45.3237808702617,0.0025664248172054,-0.00349335493257697,0.00713393393930779
+"North Africa and Middle East","Proteus spp.",76.7817366525726,24.7143173090036,120.601940912902,0.0122358319298855,0.00393843960866825,0.0192189594005335
+"South Asia","Proteus spp.",50.2876301904835,-97.9418557370713,155.039214815928,0.00276972142562848,-0.00539440127270337,0.00853918614700509
+"Southeast Asia, East Asia, and Oceania","Proteus spp.",108.415650202782,-27.9502898683701,205.723703886825,0.00466541406631362,-0.0012027753858925,0.00885283868235388
+"Sub-Saharan Africa","Proteus spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","S. agalactiae",0,0,0,0,0,0
+"High-income","S. agalactiae",0,0,0,0,0,0
+"Latin America and Caribbean","S. agalactiae",0,0,0,0,0,0
+"North Africa and Middle East","S. agalactiae",0,0,0,0,0,0
+"South Asia","S. agalactiae",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","S. agalactiae",0,0,0,0,0,0
+"Sub-Saharan Africa","S. agalactiae",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","S. aureus",-11.5146061595946,-84.24109684397,62.7127404228736,-0.00280210405365545,-0.0205002512182476,0.0152612796060203
+"High-income","S. aureus",0,0,0,0,0,0
+"Latin America and Caribbean","S. aureus",-16.7998711160833,-139.012630757785,99.917949272568,-0.0026442889015391,-0.0218804986149361,0.015727020909884
+"North Africa and Middle East","S. aureus",-90.2088812552062,-463.534112030413,231.34092182115,-0.0143755632230118,-0.0738681584428945,0.0368661710624843
+"South Asia","S. aureus",-579.307677777682,-2894.25098488615,1351.72607944892,-0.0319068701605981,-0.159408366105558,0.0744498133964355
+"Southeast Asia, East Asia, and Oceania","S. aureus",-184.835934985892,-1110.04288994673,594.348237286774,-0.00795398237644184,-0.0477681008533583,0.0255763870007697
+"Sub-Saharan Africa","S. aureus",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","S. pyogenes",0,0,0,0,0,0
+"High-income","S. pyogenes",0,0,0,0,0,0
+"Latin America and Caribbean","S. pyogenes",0,0,0,0,0,0
+"North Africa and Middle East","S. pyogenes",0,0,0,0,0,0
+"South Asia","S. pyogenes",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","S. pyogenes",0,0,0,0,0,0
+"Sub-Saharan Africa","S. pyogenes",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Citrobacter spp.",0,0,0,0,0,0
+"High-income","Citrobacter spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Citrobacter spp.",0,0,0,0,0,0
+"North Africa and Middle East","Citrobacter spp.",9.22776315908194,5.46198123152145,12.6867137135717,0.00147052364306652,0.000870413815403666,0.00202173724520251
+"South Asia","Citrobacter spp.",0.416976832933615,0.174820029392221,0.707889119706029,2.29660786120222e-05,9.62866572162049e-06,3.89888259675858e-05
+"Southeast Asia, East Asia, and Oceania","Citrobacter spp.",26.725025485103,13.7342655375746,41.1185513181083,0.00115004899742409,0.000591022011209992,0.00176944073431401
+"Sub-Saharan Africa","Citrobacter spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","E. faecium",0,0,0,0,0,0
+"High-income","E. faecium",0,0,0,0,0,0
+"Latin America and Caribbean","E. faecium",0,0,0,0,0,0
+"North Africa and Middle East","E. faecium",0,0,0,0,0,0
+"South Asia","E. faecium",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","E. faecium",0,0,0,0,0,0
+"Sub-Saharan Africa","E. faecium",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","S. pneumoniae",187.790370790311,-277.129388674808,572.649136401893,0.0456991886596595,-0.0674400298742026,0.139355392984673
+"High-income","S. pneumoniae",0,0,0,0,0,0
+"Latin America and Caribbean","S. pneumoniae",250.106311389937,-554.712130756388,800.699196086824,0.0393665724482939,-0.0873113323770663,0.126029538146677
+"North Africa and Middle East","S. pneumoniae",433.360379178209,-298.730356072357,963.472161656111,0.0690597138833839,-0.0476052586019976,0.153537598302716
+"South Asia","S. pneumoniae",840.996795744172,-1626.93933165843,2449.34116100382,0.0463200758364298,-0.0896078957792051,0.134903805699515
+"Southeast Asia, East Asia, and Oceania","S. pneumoniae",1259.53038875479,-2338.05302865795,3579.3636402042,0.054200945911915,-0.100612646488635,0.154029546880232
+"Sub-Saharan Africa","S. pneumoniae",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Salmonella spp.",0,0,0,0,0,0
+"High-income","Salmonella spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Salmonella spp.",0,0,0,0,0,0
+"North Africa and Middle East","Salmonella spp.",0,0,0,0,0,0
+"South Asia","Salmonella spp.",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","Salmonella spp.",0,0,0,0,0,0
+"Sub-Saharan Africa","Salmonella spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Serratia spp.",0,0,0,0,0,0
+"High-income","Serratia spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Serratia spp.",0,0,0,0,0,0
+"North Africa and Middle East","Serratia spp.",24.1675266323001,13.4399511754615,36.0424166969039,0.00385130379860908,0.0021417721309551,0.00574366994387899
+"South Asia","Serratia spp.",0.539975571574801,0.215571355475861,0.952218546048149,2.97405525820491e-05,1.18731505094121e-05,5.24459016835807e-05
+"Southeast Asia, East Asia, and Oceania","Serratia spp.",54.5219438859572,19.9377954408819,93.6969475833268,0.00234622440074413,0.000857976418784486,0.00403202910657531
+"Sub-Saharan Africa","Serratia spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Shigella spp.",0,0,0,0,0,0
+"High-income","Shigella spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Shigella spp.",0,0,0,0,0,0
+"North Africa and Middle East","Shigella spp.",0,0,0,0,0,0
+"South Asia","Shigella spp.",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","Shigella spp.",0,0,0,0,0,0
+"Sub-Saharan Africa","Shigella spp.",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","H. influenzae",0,0,0,0,0,0
+"High-income","H. influenzae",0,0,0,0,0,0
+"Latin America and Caribbean","H. influenzae",0,0,0,0,0,0
+"North Africa and Middle East","H. influenzae",6.18957759465448,3.42885375901145,8.83047991470657,0.000986362570930978,0.000546417418210536,0.00140721313175662
+"South Asia","H. influenzae",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","H. influenzae",4.62809562415185,1.88767633645271,7.39460613046108,0.00019915927621867,8.12317383722877e-05,0.000318209588665243
+"Sub-Saharan Africa","H. influenzae",0,0,0,0,0,0
+"Central Europe, Eastern Europe, and Central Asia","Morganella spp.",0,0,0,0,0,0
+"High-income","Morganella spp.",0,0,0,0,0,0
+"Latin America and Caribbean","Morganella spp.",0,0,0,0,0,0
+"North Africa and Middle East","Morganella spp.",0.0169706307358943,-0.0541388517909189,0.0881379825912366,2.70441636880576e-06,-8.62749294650743e-06,1.40455476607067e-05
+"South Asia","Morganella spp.",0,0,0,0,0,0
+"Southeast Asia, East Asia, and Oceania","Morganella spp.",0.0169960678322735,-0.0625786287079876,0.0869006414108106,7.31386047940473e-07,-2.69292499817865e-06,3.73956595797153e-06
+"Sub-Saharan Africa","Morganella spp.",0,0,0,0,0,0

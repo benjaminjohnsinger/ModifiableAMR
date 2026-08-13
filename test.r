@@ -1,416 +1,167 @@
-rm(list = ls())
-gc()
+data <- read.csv("summed_data_new.csv")
+head(data)
 
-library(data.table)
-library(forestplot)
-library(magrittr)
-library(dplyr)
+
+source("utils.r")
+# use the iso3_ihme_mapping to give a lending group to each row based on ISO3 code
+data$Lending.Group <- iso3_ihme_mapping$lending_group[match(data$ISO3, iso3_ihme_mapping$iso3)]
+data$lower_ihme_region <- iso3_ihme_mapping$lower_ihme_region[match(data$ISO3, iso3_ihme_mapping$iso3)]
+
+# Sum the total number of isolates by IHME region.
+isolates_by_region <- aggregate(Total.Isolates ~ lower_ihme_region, data = data, sum, na.rm = TRUE)
+isolates_by_region <- isolates_by_region[order(isolates_by_region$Total.Isolates, decreasing = TRUE), ]
+print(isolates_by_region)
+
+isolates_by_year <- aggregate(Total.Isolates ~ Year, data = data, sum, na.rm = TRUE)
+isolates_by_year <- isolates_by_year[order(isolates_by_year$Year), ]
+print(isolates_by_year)
+isolates_by_year <- isolates_by_year[isolates_by_year$Year < 2017, ]
+# plot isolates by year with a fitted line and print estimated slope
+require(ggplot2)
+plot_isolates_by_year <- ggplot(isolates_by_year, aes(x = Year, y = Total.Isolates)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Total Isolates by Year", x = "Year", y = "Total Isolates") +
+  theme_minimal()
+png("plot_isolates_by_year.png", width = 6.5, height = 3, units = "in", res = 300)
+print(plot_isolates_by_year)
+dev.off()
+
+
+# isolates by region and year
+isolates_by_region_and_year <- aggregate(Total.Isolates ~ lower_ihme_region + Year, data = data, sum, na.rm = TRUE)
+isolates_by_region_and_year <- isolates_by_region_and_year[order(isolates_by_region_and_year$lower_ihme_region, isolates_by_region_and_year$Year), ]
+# table with years as columns
+isolates_by_region_and_year_table <- reshape(isolates_by_region_and_year, idvar = "lower_ihme_region", timevar = "Year", direction = "wide")
+# sort columns by year
+year_cols <- as.numeric(gsub("Total.Isolates.", "", names(isolates_by_region_and_year_table)[-1]))
+year_order <- order(year_cols)
+isolates_by_region_and_year_table <- isolates_by_region_and_year_table[, c(1, year_order + 1)]
+print(isolates_by_region_and_year_table)
+
+
+
+# # filter to high income countries only
+# data <- data %>% filter(Lending.Group != "High income")
+
 library(tidyr)
-library(tidyverse)
+# for each antibiotic class and pathogen, calculate the proportion of of times when Percent.Resistant.Isolates goes up from one year to the next, and the proportion of times when Percent.Resistant.Isolates goes down from one year to the next.
+# plot this as a heatmap
+plotting_data <- data %>%
+  group_by(ATC.Class, Pathogen) %>%
+  filter(n() > 10) %>% #then filter out if sum of Total.Isolates is less than 100
+  filter(sum(Total.Isolates, na.rm = TRUE) > 100) %>%
+  arrange(Year) %>%
+  summarise(
+    prop_up = mean(diff(Percent.Resistant.Isolates) > 0, na.rm = TRUE),
+    prop_down = mean(diff(Percent.Resistant.Isolates) < 0, na.rm = TRUE),
+    prop_up3y = mean(diff(Percent.Resistant.Isolates, lag = 3) > 0, na.rm = TRUE),
+    prop_down3y = mean(diff(Percent.Resistant.Isolates, lag = 3) < 0, na.rm = TRUE),
+    prop_up5y = mean(diff(Percent.Resistant.Isolates, lag = 5) > 0, na.rm = TRUE),
+    prop_down5y = mean(diff(Percent.Resistant.Isolates, lag = 5) < 0, na.rm = TRUE)
+  ) %>%
+  ungroup()
 
-gradients <- fread('Outputs/database_gradients_pathogen_ATC3_PCA_joelike_weighted_test.csv')
+library(ggplot2)
 
-# Calculate interactions as the difference between R_squared and sum of individual variations
-df <- gradients %>%
-    mutate(Variation_Explained.Interactions = R_squared - (Variation_Explained.Year + Variation_Explained.GDP + 
-                                                          Variation_Explained.PC3 + Variation_Explained.PC2 + 
-                                                          Variation_Explained.PC1 + Variation_Explained.Consumption)) %>%
-    select(Pathogen, Antibiotic, R_squared,Variation_Explained.Interactions,
-           Variation_Explained.Year, Variation_Explained.GDP, Variation_Explained.PC3, 
-           Variation_Explained.PC2, Variation_Explained.PC1, Variation_Explained.Consumption,
-           ) %>%
-    pivot_longer(cols = c(Variation_Explained.Interactions,Variation_Explained.Year, Variation_Explained.GDP, Variation_Explained.PC3, 
-                          Variation_Explained.PC2, Variation_Explained.PC1, Variation_Explained.Consumption,
-                          ), 
-                 names_to = "Variable", values_to = "Variation_Explained") %>%
-    mutate(Variable = factor(Variable, levels = c("Variation_Explained.Interactions", "Variation_Explained.Year", "Variation_Explained.GDP", "Variation_Explained.PC3", 
-                                                  "Variation_Explained.PC2", "Variation_Explained.PC1", "Variation_Explained.Consumption"
-                                                  )))
+plotting_data_long <- plotting_data %>%
+  pivot_longer(cols = c(prop_up, prop_down, prop_up3y, prop_down3y, prop_up5y, prop_down5y), names_to = "direction", values_to = "proportion")
 
-data <- read.csv("merged_data_N_PC3_GDP.csv")
-data <- data %>%
-    rename(
-        Antibiotic = ATC.Class,
-        Consumption = Antibiotic.Consumption,
-        Resistance = Percent.Resistant.Isolates,
-        Pathogen = Pathogen,
-        Weight = Total.Isolates
-        )
-# to find the total variation explained by Consumption, weight each pathogen-antibiotic combination by the number of isolates (sum of Total.Isolates in data)
-data_counts <- data %>%
-    group_by(Pathogen, Antibiotic) %>%
-    summarise(Weight = sum(Weight, na.rm = TRUE))
-df <- df %>%
-    left_join(data_counts, by = c("Pathogen", "Antibiotic")) %>%
-    mutate(Weighted_Variation_Explained = Variation_Explained * Weight)
-# calculate total weighted variation explained by Consumption across all pathogen-antibiotic combinations
-total_weighted_variation_explained_consumption <- sum(df %>% filter(Variable == "Variation_Explained.Consumption") %>% pull(Weighted_Variation_Explained), na.rm = TRUE)
-total_isolates <- sum(df$Weight, na.rm = TRUE)
-overall_variation_explained_consumption <- total_weighted_variation_explained_consumption / total_isolates
-print(paste0("Overall variation explained by Consumption: ", round(overall_variation_explained_consumption, 4)))
-# and for each other variable
-for (var in c("Variation_Explained.Year", "Variation_Explained.GDP", "Variation_Explained.PC3", 
-              "Variation_Explained.PC2", "Variation_Explained.PC1", "Variation_Explained.Interactions")) {
-    total_weighted_variation_explained_var <- sum(df %>% filter(Variable == var) %>% pull(Weighted_Variation_Explained), na.rm = TRUE)
-    overall_variation_explained_var <- total_weighted_variation_explained_var / total_isolates
-    print(paste0("Overall variation explained by ", var, ": ", round(overall_variation_explained_var, 4)))
-}
+data_up_minus_down_by_lag <- plotting_data %>%
+  mutate(
+    prop_up_minus_down = (prop_up - prop_down)*100,
+    prop_up_minus_down3y = (prop_up3y - prop_down3y)*100,
+    prop_up_minus_down5y = (prop_up5y - prop_down5y)*100
+  ) %>%
+  dplyr::select(ATC.Class, Pathogen, prop_up_minus_down, prop_up_minus_down3y, prop_up_minus_down5y) %>%
+  pivot_longer(cols = c(prop_up_minus_down, prop_up_minus_down3y, prop_up_minus_down5y), names_to = "lag", values_to = "proportion")
 
-# 2. Define the mapping from Antibiotic codes to Class names
-antibiotic_map <- c(
-  "J01M" = "Quinolones",
-  "J01G" = "Aminoglycosides",
-  "J01D" = "Non-Penicillin Beta-Lactams",
-  "J01C" = "Penicillins",
-  "J01F" = "Macrolides",
-  "J01E" = "Sulfonamides and Trimethoprim",
-  "J01A" = "Tetracyclines"
-)
-
-# 3. Define the specific sort order for the Antibiotic Classes
-class_order <- c(
-  "Quinolones",
-  "Aminoglycosides",
-  "Non-Penicillin Beta-Lactams",
-  "Penicillins",
-  "Macrolides",
-  "Sulfonamides and Trimethoprim",
-  "Tetracyclines"
-)
-
-# 4. Process the data
-final_table <- df %>%
-  # Create the Antibiotic Class column using the map
-  mutate(Antibiotic_Class = antibiotic_map[Antibiotic]) %>%
-  # Clean up the Variable names (remove "Variation_Explained.")
-  mutate(Variable = str_replace(Variable, "Variation_Explained\\.", "")) %>%
-  # Select only the columns needed for the pivot
-  select(Antibiotic_Class, Pathogen, Variable, Variation_Explained) %>%
-  # Pivot from long to wide format
-  pivot_wider(names_from = Variable, values_from = Variation_Explained) %>%
-  # Reorder the columns to match your desired format
-  select(Antibiotic_Class, Pathogen, Consumption, PC1, PC2, PC3, GDP, Year, Interactions) %>%
-  # Convert Antibiotic_Class to a factor to enforce the specific sort order
-  mutate(Antibiotic_Class = factor(Antibiotic_Class, levels = class_order)) %>%
-  # Sort the rows
-  arrange(Antibiotic_Class, Pathogen) %>%
-  # Round all numeric columns to 3 decimal places
-  mutate(across(where(is.numeric), ~ round(., 3)))
-
-# 5. Output the result
-# View in RStudio
-View(final_table)
-
-# Print to console
-print(final_table)
-
-# Export to a Tab-Separated file (best for pasting into Word/Google Docs)
-write_tsv(final_table, "formatted_variable_explained_table_for_word.txt")
-
-# library(ggplot2)
-
-# p <- ggplot(df, aes(x = Pathogen, y = Variation_Explained, fill = Variable)) +
-#     geom_bar(stat = "identity", position = "stack") +
-#     scale_fill_manual(values = c(
-#                                  "Variation_Explained.Interactions" = "#C0C0C0",
-#                                  "Variation_Explained.Year" = "#648FFF",
-#                                  "Variation_Explained.GDP" = "#785EF0", 
-#                                  "Variation_Explained.PC3" = "#DC267F",
-#                                  "Variation_Explained.PC2" = "#FF832B",
-#                                  "Variation_Explained.PC1" = "#FFB000",
-#                                  "Variation_Explained.Consumption" = "#000000"),
-#                       labels = c("Variation_Explained.Year" = "Year",
-#                                  "Variation_Explained.GDP" = "GDP", 
-#                                  "Variation_Explained.PC3" = "PC3",
-#                                  "Variation_Explained.PC2" = "PC2",
-#                                  "Variation_Explained.PC1" = "PC1",
-#                                  "Variation_Explained.Consumption" = "Consumption",
-#                                  "Variation_Explained.Interactions" = "Interactions"),
-#                       guide = guide_legend(reverse = TRUE)) +
-#     scale_x_discrete(limits = rev) +
-#     facet_wrap(~ factor(Antibiotic, levels = c("J01M", "J01G", "J01D", "J01C", "J01F", "J01E", "J01A"),
-#                        labels = c("J01M" = "Quinolones", "J01G" = "Aminoglycosides", "J01D" = "Non-Penicillin Beta-Lactams", 
-#                                  "J01C" = "Penicillins", "J01F" = "Macrolides", "J01E" = "Sulfonamides and Trimethoprim", 
-#                                  "J01A" = "Tetracyclines")), ncol = 1, scales = "free_y") +
-#     labs(title = "Variation Explained by Each Variable by Pathogen for Each Antibiotic Class",
-#          x = "Pathogen",
-#          y = "Variation Explained") +
-#     theme_minimal() +
-#     coord_flip()
-
-# png('variation_explained_by_variable_stacked.png', width = 800, height = 1200)
-# print(p)
-# dev.off()
+# label the lag column to be "1 year lag", "3 year lag", "5 years"
+data_up_minus_down_by_lag <- data_up_minus_down_by_lag %>%
+  mutate(lag = recode(lag,
+                      prop_up_minus_down = "1 year",
+                      prop_up_minus_down3y = "3 years",
+                      prop_up_minus_down5y = "5 years"))
+# label 'proportion' as "Difference of proportions", add percentage signs to colorbar
+plot_up_minus_down <- ggplot(data_up_minus_down_by_lag, aes(x = ATC.Class, y = Pathogen, fill = proportion)) +
+  labs(fill = "Difference in\nproportions") +
+  geom_tile() +
+  facet_wrap(~lag) +
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red", midpoint = 0, labels = scales::percent_format(scale = 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
+png("heatmap_prop_up_minus_down.png", width = 6.5, height = 3, units = "in", res = 300)
+print(plot_up_minus_down)
+dev.off()
+
+# library(mice)
+# library(dplyr)
+# source("utils.r")
+
+# # drop columns beginning with "J"
+# data <- data[, !grepl("^J", names(data))]
+
+# # for any country-year pairs not currently in the dataset, make a row with NA values for all variables except Country and Year
+# # don't include nans for pahtogen or antibiotic class
+# ISO3 <- unique(data$ISO3)
+# Year <- unique(data$Year)
+# Pathogen <- unique(data$Pathogen)
+# Pathogen <- Pathogen[!is.na(Pathogen)]
+# ATC.Class <- unique(data$ATC.Class)
+# ATC.Class <- ATC.Class[!is.na(ATC.Class)]
+# all_country_years <- expand.grid(ISO3 = ISO3, Year = Year, Pathogen = Pathogen, ATC.Class = ATC.Class)
+# data <- merge(all_country_years, data, by = c("ISO3", "Year", "Pathogen", "ATC.Class"), all.x = TRUE)
+
+# consumption_path = "antibiotic_consumption_by_ATC3.csv"
+# # Load GRAM consumption data
+# consumption <- read.csv(consumption_path)
+# # Extract the first 4 characters of ATC.level.3.class to get the ATC class
+# consumption$ATC.level.3.class <- substr(consumption$ATC.level.3.class, 1, 4)
+# # rename columns ("Location","Year","ATC level 3 class","Antibiotic consumption (DDD/1,000/day)") in consumption data and map country names onto ISO3
+# consumption <- consumption %>%
+# rename(ISO3 = Location, Year = Year, ATC.Class = ATC.level.3.class, Antibiotic.Consumption = Antibiotic.consumption..DDD.1.000.day.) %>%
+# mutate(ISO3 = iso3_ihme_mapping$iso3[match(ISO3, iso3_ihme_mapping$country_name)])
+# consumption <- consumption %>%
+# group_by(ISO3, Year, ATC.Class) %>%
+# summarise(Antibiotic.Consumption = sum(Antibiotic.Consumption, na.rm = TRUE),
+#             .groups = "drop")
+
+# # for any country-year pairs without consumption data yet, add the values from the consumption data to the main dataset. Don't duplicate the column
+# data["Antibiotic.Consumption"] <- consumption$Antibiotic.Consumption[match(paste(data$ISO3, data$Year, data$ATC.Class, sep = "|"), paste(consumption$ISO3, consumption$Year, consumption$ATC.Class, sep = "|"))]
+  
 
 
+# pca_path = "Chungman/pcato10.csv"
+# # Load PCA covariates and merge using vectorized join
+# df.pc <- read.csv(pca_path)
+# # Create composite key for PCA: ISO3|Year
+# data$key_pca <- paste(data$ISO3, data$Year, sep = "|")
+# df.pc$key_pca <- paste(df.pc$ISO3, df.pc$Year, sep = "|")
+# idx_pca <- match(data$key_pca, df.pc$key_pca)
+# data$PC1 <- df.pc$PC1[idx_pca]
+# data$PC2 <- df.pc$PC2[idx_pca]
+# data$PC3 <- df.pc$PC3[idx_pca]
+# data$PC4 <- df.pc$PC4[idx_pca]
+# data$PC5 <- df.pc$PC5[idx_pca]
+# data$PC6 <- df.pc$PC6[idx_pca]
+# data$PC7 <- df.pc$PC7[idx_pca]
+# data$PC8 <- df.pc$PC8[idx_pca]
+# data$PC9 <- df.pc$PC9[idx_pca]
+# data$PC10 <- df.pc$PC10[idx_pca]
+# data$GDP <- df.pc$GDP[idx_pca]
+# data$key_pca <- NULL  # Clean up temporary key
+# df.pc$key_pca <- NULL
 
+# # save filled-in data to csv
+# write.csv(data, "filled_in_data.csv", row.names = FALSE)
 
+# dataMI5 = mice(data, m=20, seed=260731, printFlag = TRUE, maxit = 5)
+# # 20 imputed datasets, 5 iterations
 
-# gradients <- fread('Outputs/database_gradients_pathogen_ATC3_PCA_joelike_weighted.csv')
-# bootstraps <- fread('Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_joelike_weighted.csv')
-
-# bootstraps_permuted <- data.frame()
-# for (ab in c("J01A", "J01C", "J01D", "J01E", "J01F", "J01G", "J01M")) {
-#     bootstraps_permuted_ab <- fread(paste0('Outputs/database_gradients_bootstraps_pathogen_ATC3_PCA_joelike_weighted_permutation', ab, '.csv'))
-#     bootstraps_permuted_ab$Antibiotic_permuted <- ab
-#     bootstraps_permuted <- rbind(bootstraps_permuted, bootstraps_permuted_ab)
+# # save the imputed datasets to CSV files
+# for (i in 1:20) {
+#   imputed_data <- complete(dataMI5, i)
+#   write.csv(imputed_data, paste0("imputed_data_", i, ".csv"), row.names = FALSE)
 # }
-# gradients_permuted <- data.frame()
-# for (ab in c("J01A", "J01C", "J01D", "J01E", "J01F", "J01G", "J01M")) {
-#     gradients_permuted_ab <- fread(paste0('Outputs/database_gradients_pathogen_ATC3_PCA_joelike_weighted_permutation', ab, '.csv'))
-#     gradients_permuted_ab$Antibiotic_permuted <- ab
-#     gradients_permuted <- rbind(gradients_permuted, gradients_permuted_ab)
-# }
-
-# # Wilcoxon signed rank test to compare distributions of bootstrapped gradients vs permuted gradients, per antibiotic class and pathogen
-# results <- data.frame(Antibiotic = character(),
-#                       Pathogen = character(),
-#                       p_value = numeric(),
-#                       stringsAsFactors = FALSE)
-
-# pathogens <- unique(bootstraps$Pathogen)
-# for (ab in c("J01A", "J01C", "J01D", "J01E", "J01F", "J01G", "J01M")) {
-#     for (pathogen in pathogens) {
-#         bootstrapped_values <- bootstraps %>%
-#             filter(Antibiotic == ab, Pathogen == pathogen) %>%
-#             pull(Gradient.Consumption)
-#         permuted_values <- bootstraps_permuted %>%
-#             filter(Antibiotic_permuted == ab, Pathogen == pathogen) %>%
-#             pull(Gradient.Consumption)
-        
-#         if (length(bootstrapped_values) > 0 && length(permuted_values) > 0) {
-#             test_result <- wilcox.test(bootstrapped_values, permuted_values, alternative = "greater")
-#             results <- rbind(results, data.frame(Antibiotic = ab,
-#                                                  Pathogen = pathogen,
-#                                                  p_value = test_result$p.value,
-#                                                  wilcoxon_statistic = test_result$statistic))
-#         }
-#     }
-# }
-# # save wilcoxon results
-# fwrite(results, 'Outputs/wilcoxon_bootstrapped_vs_permuted_gradients.csv')
-
-# # Add significance levels
-# results <- results %>%
-#     mutate(significance = case_when(
-#         p_value < 0.001 ~ "X",
-#         TRUE ~ ""
-#     ))
-
-# # # plot wilcoxon statistics
-# # library(ggplot2)
-
-# # p_wilcox <- ggplot(results, aes(x = Pathogen, y = wilcoxon_statistic)) +
-# #     geom_bar(stat = "identity", fill = "steelblue") +
-# #     geom_text(aes(label = significance, y = wilcoxon_statistic + max(wilcoxon_statistic) * 0.02), 
-# #               size = 3, hjust = -0.1) +
-# #     theme_minimal() +
-# #     labs(x = "Pathogen",
-# #          y = "Wilcoxon Statistic") +
-# #     scale_x_discrete(limits = rev) +
-# #     facet_wrap(~ factor(Antibiotic, levels = c("J01M", "J01G", "J01D", "J01C", "J01F", "J01E", "J01A"),
-# #                        labels = c("J01M" = "Quinolones", "J01G" = "Aminoglycosides", "J01D" = "Non-Penicillin Beta-Lactams", 
-# #                                   "J01C" = "Penicillins", "J01F" = "Macrolides", "J01E" = "Sulfonamides and Trimethoprim", 
-# #                                   "J01A" = "Tetracyclines")), ncol = 1, scales = "free_y") +
-# #     coord_flip()
-# # png('wilcoxon_statistics_bootstrapped_vs_permuted_gradients_all_antibiotics.png', width = 1950, height = 2800, res = 300)
-# # print(p_wilcox)
-# # dev.off()
-
-# # # plot distributions of bootstrapped vs permuted gradients for all antibiotic classes in one figure
-# # library(ggplot2)
-# # pathogens <- unique(bootstraps$Pathogen)
-
-# # # Create mapping for antibiotic class names
-# ab_labels <- c("J01M" = "Quinolones", "J01G" = "Aminoglycosides", "J01D" = "Non-Penicillin Beta-Lactams", 
-#                "J01C" = "Penicillins", "J01F" = "Macrolides", "J01E" = "Sulfonamides and Trimethoprim", 
-#                "J01A" = "Tetracyclines")
-
-# # bootstraps$Type <- "Bootstrapped"
-# # bootstraps_permuted$Type <- "Permuted"
-# # # remove antibiotic_permuted==antibiotic
-# # bootstraps_permuted <- bootstraps_permuted %>%
-# #     filter(Antibiotic != Antibiotic_permuted)
-
-# # combined_data <- rbind(
-# #     bootstraps %>% filter(Gradient.Consumption >= -1.2, Gradient.Consumption <= 3.1) %>% select(Antibiotic, Gradient.Consumption, Type, Pathogen),
-# #     bootstraps_permuted %>% filter(Gradient.Consumption >= -1.2, Gradient.Consumption <= 3.1) %>% select(Antibiotic = Antibiotic_permuted, Gradient.Consumption, Type, Pathogen)
-# # )
-
-# # # only include pathogens present in both datasets for each antibiotic
-# # pathogens_in_both <- combined_data %>%
-# #     group_by(Antibiotic, Pathogen) %>%
-# #     summarise(has_both = length(unique(Type)) == 2, .groups = 'drop') %>%
-# #     filter(has_both) %>%
-# #     select(Antibiotic, Pathogen)
-
-# # combined_data <- combined_data %>%
-# #     inner_join(pathogens_in_both, by = c("Antibiotic", "Pathogen"))
-
-# # # Create the combined plot
-
-# # p <- ggplot(combined_data, aes(x = Pathogen, y = Gradient.Consumption, fill = Type)) +
-# #     geom_violin(alpha = 0.5, position = position_dodge(0.9), width = 4) +
-# #     geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-# #     theme_minimal() +
-# #     labs(title = "Distribution of Bootstrapped vs Permuted Gradients by Antibiotic Class",
-# #         x = "Pathogen",
-# #         y = "Gradient Consumption") +
-# #     scale_fill_manual(values = c("Bootstrapped" = "blue", "Permuted" = "red")) +
-# #     scale_x_discrete(limits = rev) +
-# #     facet_wrap(~ factor(Antibiotic, levels = c("J01M", "J01G", "J01D", "J01C", "J01F", "J01E", "J01A"),
-# #                        labels = ab_labels[c("J01M", "J01G", "J01D", "J01C", "J01F", "J01E", "J01A")]), 
-# #                ncol = 1, scales = "free_y") +
-# #     coord_flip()
-
-# # png('bootstrapped_vs_permuted_gradients_all_antibiotics_violin.png', width = 1200, height = 1600)
-# # print(p)
-# # dev.off()
-
-
-# # calculate the distribution of the difference between bootstrapped and permuted gradients
-# differences <- data.frame()
-# for (ab in c("J01A", "J01C", "J01D", "J01E", "J01F", "J01G", "J01M")) {
-#     print(paste("Processing antibiotic class:", ab))
-#     for (pathogen in pathogens) {
-#         bootstrapped_values <- bootstraps %>%
-#             filter(Antibiotic == ab, Pathogen == pathogen) %>%
-#             pull(Gradient.Consumption)
-#         permuted_values <- bootstraps_permuted %>%
-#             filter(Antibiotic_permuted == ab, Pathogen == pathogen) %>%
-#             pull(Gradient.Consumption)
-        
-#         if (length(bootstrapped_values) > 0 && length(permuted_values) > 0) {
-#             # Calculate 10000 independent differences (100x100)
-#             n_samples <- min(50, length(bootstrapped_values), length(permuted_values))
-            
-#             print(paste("  Processing pathogen:", pathogen, "- Bootstrap samples:", length(bootstrapped_values), "Permuted samples:", length(permuted_values)))
-            
-#             # Sample independently for each difference calculation
-#             for (i in 1:2500) {
-#                 b <- sample(bootstrapped_values, 1)
-#                 p <- sample(permuted_values, 1)
-#                 differences <- rbind(differences, data.frame(Antibiotic = ab,
-#                                                              Pathogen = pathogen,
-#                                                              Difference = b - p))
-#             }
-#         }
-#     }
-# }
-# # plot median and 95% CI of differences per antibiotic class and pathogen
-# differences_summary <- differences %>%
-#     group_by(Antibiotic, Pathogen) %>%
-#     summarise(median_difference = median(Difference, na.rm = TRUE),
-#               Lower_sd = median(Difference, na.rm = TRUE) - sd(Difference, na.rm = TRUE),
-#               Upper_sd = median(Difference, na.rm = TRUE) + sd(Difference, na.rm = TRUE),
-#               Lower_CI = quantile(Difference, 0.025, na.rm = TRUE),
-#               Upper_CI = quantile(Difference, 0.975, na.rm = TRUE))
-# print(differences_summary, n=100)
-# # save
-# fwrite(differences_summary, 'Outputs/bootstrapped_permuted_gradient_differences_sd_summary_downsampled.csv')
-
-# # load
-# differences_summary <- fread('Outputs/bootstrapped_permuted_gradient_differences_sd_summary_downsampled.csv')
-# # print entire table
-# print(differences_summary)
-
-# library(ggplot2)
-# # plot the differences
-# p_diff <- ggplot(differences_summary, aes(x = Pathogen, y = median_difference)) +
-#     geom_point() +
-#     geom_errorbar(aes(ymin = Lower_sd, ymax = Upper_sd), width = 0.2) +
-#     geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-#     theme_minimal() +
-#     labs(title = "Median Difference between Bootstrapped and Permuted Gradients by Antibiotic Class",
-#         x = "Pathogen",
-#         y = "Median Difference (Bootstrapped - Permuted)") +
-#     scale_x_discrete(limits = rev) +
-#     scale_y_continuous(limits = c(-10, 10)) +
-#     facet_wrap(~ factor(Antibiotic, levels = c("J01M", "J01G", "J01D", "J01C", "J01F", "J01E", "J01A"),
-#                        labels = ab_labels[c("J01M", "J01G", "J01D", "J01C", "J01F", "J01E", "J01A")]), 
-#                ncol = 1) +
-#     coord_flip()
-# png('bootstrapped_permuted_gradients_all_antibiotics_median_difference_sd_downsampled.png', width = 1950, height = 2800, res = 300)
-# print(p_diff)
-# dev.off()
-
-
-
-
-
-
-
-
-# # calculate standard deviation of gradients within drug classes, scaled by mean
-# df_summary <- df %>%
-#   group_by(Antibiotic) %>%
-#   summarise(mean_gradient = mean(Response, na.rm = TRUE),
-#             sd_gradient = sd(Response, na.rm = TRUE),
-#             n = n()) %>%
-#   mutate(cv_gradient = sd_gradient / abs(mean_gradient)) %>%
-#   arrange(desc(cv_gradient))
-
-# # same organised by pathogen
-# df_summary_pathogen <- df %>%
-#   group_by(Pathogen) %>%
-#   summarise(mean_gradient = mean(Response, na.rm = TRUE),
-#             sd_gradient = sd(Response, na.rm = TRUE),
-#             n = n()) %>%
-#   mutate(cv_gradient = sd_gradient / abs(mean_gradient)) %>%
-#   arrange(desc(cv_gradient))
-
-# # calculate standard deviation of gradients within drug classes, with bootstrapped confidence intervals
-# bootstraps <- bootstraps %>%
-#   group_by(Pathogen, Antibiotic) %>%
-#   summarise(sd_gradient = sd(Gradient.Consumption, na.rm = TRUE))
-# # bootstraps$sd_gradient <- sd()
-
-# df_summary <- df %>%
-#   group_by(Pathogen) %>%
-#   summarise(mean_gradient = mean(Response, na.rm = TRUE),
-#             sd_gradient = sd(Response, na.rm = TRUE),
-#             n = n()) %>%
-#   left_join(
-#     bootstraps %>%
-#       group_by(Pathogen) %>%
-#       summarise(
-#         sd_gradient_lower = quantile(sd_gradient, 0.025, na.rm = TRUE),
-#         sd_gradient_upper = quantile(sd_gradient, 0.975, na.rm = TRUE)
-#       ),
-#     by = "Pathogen"
-#   ) %>%
-#   arrange(desc(cv_gradient))
-
-# print(df_summary)
-# print(mean(df_summary$sd_gradient, na.rm = TRUE))
-
-# # calculate the mean standard deviation 1000 times, sampling from the bootstrapped sd gradients, to get a confidence interval on the mean sd gradient
-# set.seed(42)
-# mean_sds <- replicate(1000, {
-#   sampled_sds <- bootstraps %>%
-#     group_by(Pathogen, Antibiotic) %>%
-#     summarise(sd_gradient = sample(Gradient.Consumption, 1), .groups = 'drop') %>%
-#     ungroup() %>%
-#     group_by(Antibiotic) %>%
-#     summarise(mean_sd = mean(sd_gradient, na.rm = TRUE))
-#   mean(sampled_sds$mean_sd, na.rm = TRUE)
-# })
-# mean_sd <- mean(mean_sds, na.rm = TRUE)
-# mean_sd_lower <- quantile(mean_sds, 0.025, na.rm = TRUE)
-# mean_sd_upper <- quantile(mean_sds, 0.975, na.rm = TRUE)
-# print(paste0("Mean SD of gradients by antibiotic: ", round(mean_sd, 4), " (95% CI: ", round(mean_sd_lower, 4), "-", round(mean_sd_upper, 4), ")"))
-# mean_sds <- replicate(1000, {
-#   sampled_sds <- bootstraps %>%
-#     group_by(Pathogen, Antibiotic) %>%
-#     summarise(sd_gradient = sample(Gradient.Consumption, 1), .groups = 'drop') %>%
-#     ungroup() %>%
-#     group_by(Pathogen) %>%
-#     summarise(mean_sd = mean(sd_gradient, na.rm = TRUE))
-#   mean(sampled_sds$mean_sd, na.rm = TRUE)
-# })
-# mean_sd <- mean(mean_sds, na.rm = TRUE)
-# mean_sd_lower <- quantile(mean_sds, 0.025, na.rm = TRUE)
-# mean_sd_upper <- quantile(mean_sds, 0.975, na.rm = TRUE)
-# print(paste0("Mean SD of gradients by pathogen: ", round(mean_sd, 4), " (95% CI: ", round(mean_sd_lower, 4), "-", round(mean_sd_upper, 4), ")"))

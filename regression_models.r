@@ -10,6 +10,8 @@ library(future.apply)
 source("utils.R")
 source("config.R")
 
+plan(multisession, workers = parallel::detectCores() - 1)
+
 # NOTE: Lagged-response modeling is preserved as exploratory functionality only.
 # Main and supplementary publication analyses should run with apply_lagged_response = FALSE.
 
@@ -62,7 +64,7 @@ get_runtime_options <- function() {
         smoke_mode = smoke_mode,
         verbose = verbose,
         random_seed = get_integer_env("AMR_RANDOM_SEED", default = 20260506),
-        boot_nsim = if (smoke_mode) 0 else 1000,
+        boot_nsim = if (smoke_mode) 0 else 10000,
         smoke_max_classes = if (smoke_mode) 3 else Inf,
         smoke_max_pathogens = if (smoke_mode) 3 else Inf,
         smoke_max_pairs = if (smoke_mode) 9 else Inf,
@@ -234,13 +236,6 @@ load_nagorsen_model_inputs <- function(
             PC1 = PC1,
             PC2 = PC2,
             PC3 = PC3,
-            PC4 = PC4,
-            PC5 = PC5,
-            PC6 = PC6,
-            PC7 = PC7,
-            PC8 = PC8,
-            PC9 = PC9,
-            PC10 = PC10,
             GDP = GDP,
             Year = end_year
         )
@@ -383,6 +378,7 @@ load_model_inputs <- function(
 
     list(data = data, data_HIC = data_HIC, data_LMIC = data_LMIC)
 }
+
 build_global_consumption_reference <- function(consumption_path = "antibiotic_consumption_by_ATC3.csv", year = "2018") {
     consumption <- read.csv(consumption_path)
     global_consumption <- consumption[consumption$Location == "Global", ]
@@ -397,7 +393,7 @@ build_global_consumption_reference <- function(consumption_path = "antibiotic_co
     global_consumption
 }
 
-scale_and_log_transform <- function(df, global_consumption, model_family = "gaussian") {
+scale_and_log_transform <- function(df, global_consumption, model_family = "gaussian", continuity_correction = 1) {
     join_by <- if ("Consumption.Class" %in% names(df)) {
         c("Consumption.Class" = "Antibiotic")
     } else {
@@ -421,7 +417,8 @@ scale_and_log_transform <- function(df, global_consumption, model_family = "gaus
     df <- df %>%
         filter(!is.na(Consumption) & !is.na(Resistance) & !is.na(Weight))
 
-    df$Consumption <- log(df$Consumption + 1)
+    df$Consumption <- log(df$Consumption)
+
     if (model_family == "binomial") {
         df$Resistance <- df$Resistance / 100
         df$resistant_count <- round(df$Resistance * df$Weight)
@@ -430,7 +427,10 @@ scale_and_log_transform <- function(df, global_consumption, model_family = "gaus
         df$Weight <- df$Weight / max(df$Weight, na.rm = TRUE)
     } else {
         # Gaussian defaults
-        df$Resistance <- log(df$Resistance + 1)
+        if (continuity_correction == 0) {
+            continuity_correction <- 1
+        }
+        df$Resistance <- log(df$Resistance + continuity_correction)
         df$Weight <- df$Weight / max(df$Weight, na.rm = TRUE)
     }
 
@@ -535,8 +535,18 @@ build_output_path <- function(prefix, output_tag) {
 write_random_effects_outputs <- function(
     gradient_prefix, lower_prefix, upper_prefix, bootstrap_prefix, output_tag,
     gradients, lower_ci, upper_ci, bootstraps,
-    r_squareds = NULL, white_tests = NULL, rmses = NULL, aics = NULL, bics = NULL, vif_list = NULL
+    r_squareds = NULL, white_tests = NULL, rmses = NULL, aics = NULL, bics = NULL,
+    vif_list = NULL, model_singular_flags = NULL, bootstrap_singular_props = NULL
 ) {
+    if (is.null(model_singular_flags)) {
+        model_singular_flags <- rep(NA, length(gradients))
+    }
+    if (is.null(bootstrap_singular_props)) {
+        bootstrap_singular_props <- rep(NA_real_, length(gradients))
+    }
+    model_singular_flags <- rep(model_singular_flags, length.out = length(gradients))
+    bootstrap_singular_props <- rep(bootstrap_singular_props, length.out = length(gradients))
+
     # If the new metrics are provided, attach them to the gradients dataframe
     if (!is.null(r_squareds)) {
         gradients_df <- data.frame(
@@ -545,7 +555,9 @@ write_random_effects_outputs <- function(
             White_test_p_value = white_tests,
             RMSE = rmses,
             AIC = aics,
-            BIC = bics
+            BIC = bics,
+            Model_Singular = model_singular_flags,
+            Bootstrap_Singular_Proportion = bootstrap_singular_props
         )
         
         # Format VIFs into a dataframe if available
@@ -596,13 +608,15 @@ initialize_random_effects_accumulator <- function() {
         rmses = numeric(),
         aics = numeric(),
         bics = numeric(),
-        vif_list = list()
+        vif_list = list(),
+        model_singular_flags = logical(),
+        bootstrap_singular_proportions = numeric()
     )
 }
 
 append_random_effects_result <- function(
     accumulator, label, gradient, intercept, lower_ci, upper_ci, bootstrap_df,
-    r_sq, white_p, rmse, aic, bic, vifs
+    r_sq, white_p, rmse, aic, bic, vifs, model_singular = NA, bootstrap_singular_proportion = NA_real_
 ) {
     accumulator$labels <- c(accumulator$labels, label)
     accumulator$gradients <- c(accumulator$gradients, gradient)
@@ -618,6 +632,8 @@ append_random_effects_result <- function(
     accumulator$aics <- c(accumulator$aics, aic)
     accumulator$bics <- c(accumulator$bics, bic)
     accumulator$vif_list[[length(accumulator$vif_list) + 1]] <- vifs
+    accumulator$model_singular_flags <- c(accumulator$model_singular_flags, model_singular)
+    accumulator$bootstrap_singular_proportions <- c(accumulator$bootstrap_singular_proportions, bootstrap_singular_proportion)
     
     accumulator
 }
@@ -636,6 +652,21 @@ format_combo_results <- function(named_vector, value_col_name) {
         tidyr::separate(Combo_Label, into = c("Pathogen", "Antibiotic"), sep = "___")
 }
 
+bootstrap_sample_indices <- function(data_subset) {
+    unique_countries <- unique(data_subset$ISO3)
+    n_countries <- length(unique_countries)
+    n_rows <- nrow(data_subset)
+
+    if (n_countries <= 2) {
+        return(sample.int(n_rows, n_rows, replace = TRUE))
+    }
+
+    sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
+    unlist(lapply(sampled_countries, function(iso) {
+        which(data_subset$ISO3 == iso)
+    }))
+}
+
 extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL, extra_pcs = FALSE) {
     gradient <- summary(model)$coefficients["Consumption", 1]
     intercept <- summary(model)$coefficients["(Intercept)", 1]
@@ -643,15 +674,8 @@ extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL,
     if (boot_nsim > 0 && !is.null(data_subset)) {
         boot_result <- tryCatch(
             {
-                unique_countries <- unique(data_subset$ISO3)
-                n_countries <- length(unique_countries)
-                
-                boot_values <- replicate(boot_nsim, {
-                    sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
-                    idx <- unlist(lapply(sampled_countries, function(iso) {
-                        which(data_subset$ISO3 == iso)
-                    }))
-                    
+                boot_values <- future_replicate(boot_nsim, {
+                    idx <- bootstrap_sample_indices(data_subset)
                     bdf <- data_subset[idx, ]
                     mb <- lm(
                         formula = get_fixed_effects_formula(extra_pcs = extra_pcs),
@@ -668,7 +692,7 @@ extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL,
                 )
             },
             error = function(e) {
-                warning("Cluster bootstrap failed for LM Consumption term; using Wald CI fallback. Error: ", conditionMessage(e))
+                warning("Bootstrap failed for LM Consumption term; using Wald CI fallback. Error: ", conditionMessage(e))
                 intervals <- confint(model)
                 list(
                     lower_ci = intervals["Consumption", 1],
@@ -701,8 +725,10 @@ extract_lm_consumption_summary <- function(model, boot_nsim, data_subset = NULL,
         intercept = intercept,
         lower_ci = lower_ci,
         upper_ci = upper_ci,
-        se = calc_se, # NEW: Standard error for MI
-        bootstrap_values = bootstrap_values
+        se = calc_se,
+        bootstrap_values = bootstrap_values,
+        bootstrap_singular_proportion = 0,
+        model_singular = FALSE
     )
 }
 
@@ -712,18 +738,11 @@ extract_glm_ppml_consumption_summary <- function(model, boot_nsim, data_subset =
 
     if (boot_nsim > 0 && !is.null(data_subset)) {
         boot_result <- tryCatch({
-            unique_countries <- unique(data_subset$ISO3)
-            n_countries <- length(unique_countries)
-
             # Per-replicate error handling keeps successful bootstrap draws
-            # even when some cluster resamples fail to fit.
+            # even when some resamples fail to fit.
             boot_values <- replicate(boot_nsim, {
                 tryCatch({
-                    sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
-                    idx <- unlist(lapply(sampled_countries, function(iso) {
-                        which(data_subset$ISO3 == iso)
-                    }))
-
+                    idx <- bootstrap_sample_indices(data_subset)
                     bdf <- data_subset[idx, ]
                     mb <- fit_ppml_glm(bdf, extra_pcs = extra_pcs)
                     coef(mb)[["Consumption"]]
@@ -737,7 +756,7 @@ extract_glm_ppml_consumption_summary <- function(model, boot_nsim, data_subset =
 
             if (invalid_n > 0) {
                 warning(
-                    "PPML cluster bootstrap dropped ", invalid_n,
+                    "PPML bootstrap dropped ", invalid_n,
                     " of ", length(boot_values), " resamples due to fit failures."
                 )
             }
@@ -751,7 +770,7 @@ extract_glm_ppml_consumption_summary <- function(model, boot_nsim, data_subset =
             } else {
                 intervals <- suppressMessages(confint.default(model))
                 warning(
-                    "PPML cluster bootstrap produced fewer than 2 valid resamples; ",
+                    "PPML bootstrap produced fewer than 2 valid resamples; ",
                     "falling back to Wald CI for interval estimation."
                 )
                 list(
@@ -761,7 +780,7 @@ extract_glm_ppml_consumption_summary <- function(model, boot_nsim, data_subset =
                 )
             }
         }, error = function(e) {
-            warning("Cluster bootstrap failed for PPML Consumption term. Error: ", conditionMessage(e))
+            warning("Bootstrap failed for PPML Consumption term. Error: ", conditionMessage(e))
             intervals <- suppressMessages(confint.default(model))
             list(
                 lower_ci = intervals["Consumption", 1],
@@ -826,126 +845,110 @@ extract_glm_binomial_consumption_summary <- function(model, boot_nsim, data_subs
         intercept = intercept,
         lower_ci = lower_ci,
         upper_ci = upper_ci,
-        bootstrap_values = boot_values
+        bootstrap_values = boot_values,
+        bootstrap_singular_proportion = 0,
+        model_singular = FALSE
     )
 }
 
 extract_lmer_consumption_summary <- function(model, boot_nsim, data_subset = NULL) {
     gradient <- summary(model)$coefficients["Consumption", 1]
     intercept <- summary(model)$coefficients["(Intercept)", 1]
-    
-    # NEW: Determine exactly how many fixed effects the healthy main model has
     expected_coef_count <- length(lme4::fixef(model))
+    model_singular <- tryCatch(lme4::isSingular(model), error = function(e) FALSE)
 
     if (boot_nsim > 0 && !is.null(data_subset)) {
         boot_result <- tryCatch(
             {
-                unique_countries <- unique(data_subset$ISO3)
-                n_countries <- length(unique_countries)
-                
-                boot_values <- replicate(boot_nsim, {
-                    
-                    # NEW: Retry mechanism (prevents throwing away too many iterations)
+                singular_counter <- 0L
+
+                boot_values <- future_replicate(boot_nsim, {
                     max_attempts <- 10
                     attempt <- 1
                     valid_estimate <- NA
-                    
-                    while(attempt <= max_attempts && is.na(valid_estimate)) {
-                        
-                        # 1. Resample countries
-                        sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
-                        idx <- unlist(lapply(sampled_countries, function(iso) {
-                            which(data_subset$ISO3 == iso)
-                        }))
-                        
+
+                    while (attempt <= max_attempts && is.na(valid_estimate)) {
+                        idx <- bootstrap_sample_indices(data_subset)
                         bdf <- data_subset[idx, ]
-                        
+
                         valid_estimate <- tryCatch({
-                            # 2. Fit the mixed model
                             mb <- lme4::lmer(
                                 formula = formula(model),
                                 data = bdf,
                                 weights = Weight,
                                 control = lme4::lmerControl(calc.derivs = FALSE)
                             )
-                            
-                            # NEW: Rank deficiency check for LMER
-                            # If the bootstrap model has fewer coefficients than the main model, a factor was dropped.
+
                             if (length(lme4::fixef(mb)) != expected_coef_count) {
                                 stop("Rank deficient (dropped factors) in LMER fit.")
                             }
-                            
-                            # 3. Handle Singularities
+
                             if (lme4::isSingular(mb)) {
+                                singular_counter <<- singular_counter + 1L
                                 mb_fallback <- lm(
-                                    formula = lme4::nobars(formula(model)), 
+                                    formula = lme4::nobars(formula(model)),
                                     data = bdf,
                                     weights = Weight
                                 )
-                                
-                                # NEW: Rank deficiency check for LM fallback
-                                # In base R 'lm', dropped factors result in NA coefficients.
+
                                 if (any(is.na(coef(mb_fallback)))) {
                                     stop("Rank deficient (dropped factors) in LM fallback.")
                                 }
-                                
+
                                 coef(mb_fallback)["Consumption"]
-                                
                             } else {
                                 lme4::fixef(mb)["Consumption"]
                             }
-                            
                         }, error = function(e) {
-                            # If an error or stop() occurs, return NA to trigger the next while-loop attempt
-                            NA 
+                            NA
                         })
-                        
+
                         attempt <- attempt + 1
                     }
-                    
-                    # If it failed 10 times in a row, it returns NA and moves to the next bootstrap iteration
+
                     if (is.na(valid_estimate)) {
                         warning("Bootstrap iteration completely failed after 10 attempts due to data structure/rank deficiency.")
                     }
-                    
-                    return(valid_estimate)
+
+                    valid_estimate
                 })
-                
-                # Clean out any persistent NAs before calculating quantiles
+
                 valid_boot_values <- boot_values[!is.na(boot_values)]
 
                 list(
                     lower_ci = quantile(valid_boot_values, 0.025, na.rm = TRUE),
                     upper_ci = quantile(valid_boot_values, 0.975, na.rm = TRUE),
-                    bootstrap_values = boot_values
+                    bootstrap_values = boot_values,
+                    bootstrap_singular_proportion = if (boot_nsim > 0) singular_counter / boot_nsim else 0
                 )
             },
             error = function(e) {
-                warning("Cluster bootstrap failed entirely; using Wald CI fallback. Error: ", conditionMessage(e))
+                warning("Bootstrap failed entirely; using Wald CI fallback. Error: ", conditionMessage(e))
                 intervals <- suppressMessages(confint(model, parm = "Consumption", method = "Wald"))
                 list(
                     lower_ci = intervals[1, 1],
                     upper_ci = intervals[1, 2],
-                    bootstrap_values = gradient
+                    bootstrap_values = gradient,
+                    bootstrap_singular_proportion = 0
                 )
             }
         )
         lower_ci <- boot_result$lower_ci
         upper_ci <- boot_result$upper_ci
         bootstrap_values <- boot_result$bootstrap_values
+        bootstrap_singular_proportion <- boot_result$bootstrap_singular_proportion
     } else {
         intervals <- suppressMessages(confint(model, parm = "Consumption", method = "Wald"))
         lower_ci <- intervals[1, 1]
         upper_ci <- intervals[1, 2]
         bootstrap_values <- gradient
+        bootstrap_singular_proportion <- 0
     }
 
-    # Calculate SE from bootstraps, fallback to Wald SE if bootstraps failed/0
     if (boot_nsim > 0 && !is.null(data_subset) && length(bootstrap_values) > 1) {
         calc_se <- sd(bootstrap_values, na.rm = TRUE)
     } else {
-        # Fallback to analytic standard error
-        calc_se <- summary(model)$coefficients["Consumption", 2] 
+        calc_se <- summary(model)$coefficients["Consumption", 2]
     }
 
     list(
@@ -953,8 +956,10 @@ extract_lmer_consumption_summary <- function(model, boot_nsim, data_subset = NUL
         intercept = intercept,
         lower_ci = lower_ci,
         upper_ci = upper_ci,
-        se = calc_se, # NEW: Standard error for MI
-        bootstrap_values = bootstrap_values
+        se = calc_se,
+        bootstrap_values = bootstrap_values,
+        bootstrap_singular_proportion = bootstrap_singular_proportion,
+        model_singular = model_singular
     )
 }
 
@@ -996,7 +1001,9 @@ extract_glmer_binomial_consumption_summary <- function(model, boot_nsim) {
         intercept = intercept,
         lower_ci = boot_result$lower_ci,
         upper_ci = boot_result$upper_ci,
-        bootstrap_values = boot_result$bootstrap_values
+        bootstrap_values = boot_result$bootstrap_values,
+        bootstrap_singular_proportion = 0,
+        model_singular = FALSE
     )
 }
 
@@ -1024,14 +1031,8 @@ extract_glmer_ppml_consumption_summary <- function(model, boot_nsim, data_subset
         }
 
         boot_result <- tryCatch({
-            unique_countries <- unique(data_subset$ISO3)
-            n_countries <- length(unique_countries)
-
             boot_values <- replicate(boot_nsim, {
-                sampled_countries <- sample(unique_countries, n_countries, replace = TRUE)
-                idx <- unlist(lapply(sampled_countries, function(iso) {
-                    which(data_subset$ISO3 == iso)
-                }))
+                idx <- bootstrap_sample_indices(data_subset)
                 bdf <- data_subset[idx, ]
 
                 # Try random-effects PPML first; if it is non-converged or fails,
@@ -1112,7 +1113,16 @@ extract_glmer_ppml_consumption_summary <- function(model, boot_nsim, data_subset
 
     calc_se <- if (length(bootstrap_values) > 1) sd(bootstrap_values, na.rm = TRUE) else summary(model)$coefficients$cond["Consumption", 2]
 
-    list(gradient = gradient, intercept = intercept, lower_ci = lower_ci, upper_ci = upper_ci, se = calc_se, bootstrap_values = bootstrap_values)
+    list(
+        gradient = gradient,
+        intercept = intercept,
+        lower_ci = lower_ci,
+        upper_ci = upper_ci,
+        se = calc_se,
+        bootstrap_values = bootstrap_values,
+        bootstrap_singular_proportion = 0,
+        model_singular = FALSE
+    )
 }
 
 build_bootstrap_df <- function(label_name, label_value, bootstrap_values) {
@@ -1134,6 +1144,8 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
     RMSEs <- c()
     AICs <- c()
     BICs <- c()
+    model_singular_flags <- logical()
+    bootstrap_singular_props <- numeric()
 
     antibiotics_to_fit <- sort(unique(data_$Antibiotic))
     pathogens_to_fit <- sort(unique(data_$Pathogen))
@@ -1157,7 +1169,7 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
             data_subset <- data_subset[complete.cases(data_subset[, vars_needed]), ]
             data_subset <- data_subset[!is.infinite(data_subset$Consumption), ]
             data_subset <- data_subset[!is.infinite(data_subset$Resistance), ]
-            if (nrow(data_subset) <= 1) {
+            if (nrow(data_subset) <= length(vars_needed)) {
                 next
             }
 
@@ -1171,11 +1183,25 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
                 stop("Unsupported model family: ", model_family)
             }
 
+            non_na_predictors <- setdiff(names(coef(model))[!is.na(coef(model))], "(Intercept)")
+            if (length(non_na_predictors) < 2) {
+                next
+            }
+
             # calculate White test for heteroskedasticity
             white_test <- white(model)$p.value
             RMSE <- sqrt(mean(model$residuals^2))
             AIC <- AIC(model)
             BIC <- BIC(model)
+
+            if (output_tag == "main") {
+                # save residuals csv
+                residuals_path <- paste0("Outputs/residuals/residuals_", antibiotic, "_", pathogen, ".csv")
+                # transform residuals back into original scale (i.e. percentages)
+                model_predictions <- predict(model, newdata = data_subset, type = "response")
+                resids <- exp(data_subset$Resistance) - exp(model_predictions)
+                write.csv(data.frame(Residuals = resids, Consumption = data_subset$Consumption), residuals_path, row.names = FALSE)
+            }
 
             # # save a plot of residuals
             # plot_path <- paste0("residuals_", antibiotic, "_", pathogen, "_year_colors_nonppml.png")
@@ -1317,6 +1343,8 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
             RMSEs <- c(RMSEs, RMSE)
             AICs <- c(AICs, AIC)
             BICs <- c(BICs, BIC)
+            model_singular_flags <- c(model_singular_flags, FALSE)
+            bootstrap_singular_props <- c(bootstrap_singular_props, 0)
 
             outdf <- data.frame(
                 Pathogen = pathogen,
@@ -1347,7 +1375,9 @@ fit_combined_pathogen_drug_lm <- function(data_, output_tag = "lagged", runtime_
         White_test_p_value = white_tests,
         RMSE = RMSEs,
         AIC = AICs,
-        BIC = BICs
+        BIC = BICs,
+        Model_Singular = model_singular_flags,
+        Bootstrap_Singular_Proportion = bootstrap_singular_props
     )
     results <- cbind(results, variation_explained_df, vif_df)
 
@@ -1758,6 +1788,8 @@ fit_random_effects_models <- function(
 
         n_levels <- length(unique(subset_data[[random_effect_var]]))
 
+        model_singular_flag <- FALSE
+
         # Fit lmer if there are >2 levels. If singular/too few levels, check fallback.
         if (n_levels > 2 && nrow(subset_data) > n_levels) {
             if (model_family == "gaussian") {
@@ -1779,6 +1811,8 @@ fit_random_effects_models <- function(
                 # glmmTMB indicates singular fits with a non-positive-definite Hessian
                 is_singular_flag <- !isTRUE(model$sdr$pdHess)
             }
+
+            model_singular_flag <- is_singular_flag
 
             if (is_singular_flag) {
                 if (allow_fallback) {
@@ -1805,23 +1839,15 @@ fit_random_effects_models <- function(
                 }
             }
         } else {
-            if (allow_fallback) {
-                log_info(paste("Only", n_levels, "levels for", singular_msg, label, "- falling back to weighted lm"), verbose = runtime_options$verbose)
-                if (model_family == "gaussian") {
-                    model <- fit_weighted_lm(subset_data, extra_pcs = extra_pcs)
-                    summary_stats <- extract_lm_consumption_summary(model, runtime_options$boot_nsim, subset_data)
-                } else if (model_family == "binomial") {
-                    model <- fit_binomial_glm(subset_data)
-                    summary_stats <- extract_glm_binomial_consumption_summary(model, runtime_options$boot_nsim, subset_data)
-                } else if (model_family == "ppml") {
-                    model <- fit_ppml_glm(subset_data, extra_pcs = extra_pcs)
-                    summary_stats <- extract_glm_ppml_consumption_summary(model, runtime_options$boot_nsim, subset_data, extra_pcs = extra_pcs)
-                }
-            } else {
-                log_info(paste("Only", n_levels, "levels for", singular_msg, label, "- excluding"), verbose = runtime_options$verbose)
+            log_info(paste("Only", n_levels, "levels for", singular_msg, label, "- excluding"), verbose = runtime_options$verbose)
                 next
-            }
         }
+        bootstrap_singular_proportion <- if ("bootstrap_singular_proportion" %in% names(summary_stats)) {
+            summary_stats$bootstrap_singular_proportion
+        } else {
+            NA_real_
+        }
+
         RMSE_val <- sqrt(mean(residuals(model)^2))
         AIC_val <- AIC(model)
         BIC_val <- BIC(model)
@@ -1867,7 +1893,9 @@ fit_random_effects_models <- function(
             rmse = RMSE_val,
             aic = AIC_val,
             bic = BIC_val,
-            vifs = vifs
+            vifs = vifs,
+            model_singular = model_singular_flag,
+            bootstrap_singular_proportion = bootstrap_singular_proportion
         )
         # # plot and save model residuals
         # png_filename <- paste0("residuals_", mode, "_", label, ".png")
@@ -1911,7 +1939,9 @@ fit_random_effects_models <- function(
         rmses = accumulator$rmses,
         aics = accumulator$aics,
         bics = accumulator$bics,
-        vif_list = accumulator$vif_list
+        vif_list = accumulator$vif_list,
+        model_singular_flags = accumulator$model_singular_flags,
+        bootstrap_singular_props = accumulator$bootstrap_singular_proportions
     )
 }
 
@@ -1930,6 +1960,45 @@ resolve_model_jobs <- function(scenario) {
             output_prefix = "database"
         )))
     }
+
+    if (scenario == "continuity") {
+        # Fetch the custom lag value first
+        custom_correction <- get_integer_env("CONTINUITY_EXP", default = 2)
+        if (custom_correction == 100){
+            continuity_correction <- 0
+        } else {
+            continuity_correction <- 10^(-custom_correction)
+        }
+        tag_suffix <- if (custom_correction == 2) "ccorrected" else paste0("ccorrected", custom_correction)
+        return(list(list(
+            income = "all",
+            summed_data_path = "summed_data_new.csv",
+            merged_sums_path = "summed_data_sums_new.csv",
+            class_output_tag = paste0("all", tag_suffix),
+            pathogen_output_tag = paste0("main", tag_suffix),
+            analysis_intent = "main_publication",
+            apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
+            data_source = "summed",
+            output_prefix = "database",
+            continuity_correction = continuity_correction
+        )))
+    }
+
+    if (scenario == "raw_iqvia") {
+        return(list(list(
+            income = "all",
+            summed_data_path = "IQVIA_data_new.csv",
+            merged_sums_path = "IQVIA_data_sums_new.csv",
+            class_output_tag = "all_IQVIA",
+            pathogen_output_tag = "main_IQVIA",
+            analysis_intent = "main_publication",
+            apply_lagged_response = FALSE,
+            apply_lagged_consumption = FALSE,
+            data_source = "summed",
+            output_prefix = "database"
+        )))
+    }
     
     if (scenario == "main_finer") {
         return(list(list(
@@ -1938,7 +2007,7 @@ resolve_model_jobs <- function(scenario) {
             merged_sums_path = "finer_data_sums_new.csv",
             antibiotic_col = "Antibiotic",
             consumption_class_col = "ATC.Class",
-            class_output_tag = "all",
+            class_output_tag = "all_finer",
             pathogen_output_tag = "main_finer",
             analysis_intent = "main_publication",
             apply_lagged_response = FALSE,
@@ -2088,35 +2157,6 @@ resolve_model_jobs <- function(scenario) {
             output_prefix = "database",
             model_family = "ppml"
         )))
-    }
-
-    if (scenario == "raw_iqvia") {
-        return(list(
-            list(
-                income = "all",
-                summed_data_path = "summed_data_new_IQVIA.csv",
-                merged_sums_path = "summed_data_sums_new_IQVIA.csv",
-                class_output_tag = "all_IQVIA",
-                pathogen_output_tag = "IQVIA",
-                analysis_intent = "main_publication",
-                apply_lagged_response = FALSE,
-                apply_lagged_consumption = FALSE,
-                data_source = "summed",
-                output_prefix = "database"
-            ),
-            list(
-                income = "all",
-                summed_data_path = "summed_data_new_IQVIAextrapolation.csv",
-                merged_sums_path = "summed_data_sums_new_IQVIAextrapolation.csv",
-                class_output_tag = "IQVIAextrapolation_all",
-                pathogen_output_tag = "IQVIAextrapolation",
-                analysis_intent = "main_publication",
-                apply_lagged_response = FALSE,
-                apply_lagged_consumption = FALSE,
-                data_source = "summed",
-                output_prefix = "database"
-            )
-        ))
     }
 
     if (scenario == "hospital_nagorsen") {
@@ -2278,6 +2318,7 @@ resolve_model_jobs <- function(scenario) {
 run_class_model_pipeline <- function(job) {
     runtime_options <- get_runtime_options()
     model_family <- job_or_default(job, "model_family", "gaussian")
+    continuity_correction <- job_or_default(job, "continuity_correction", 1)
 
     if (!model_family %in% c("gaussian", "binomial", "ppml")) {
         stop("Unsupported model_family: ", model_family, call. = FALSE)
@@ -2315,7 +2356,8 @@ run_class_model_pipeline <- function(job) {
     data <- scale_and_log_transform(
         data,
         global_consumption,
-        model_family = model_family
+        model_family = model_family,
+        continuity_correction = continuity_correction
     )
 
     # if ref_year != 2018, add it to output tags
@@ -2429,6 +2471,7 @@ run_mi_class_model_pipeline <- function(job) {
 
     runtime_options$boot_nsim <- 1000 
     model_family <- job_or_default(job, "model_family", "gaussian")
+    continuity_correction <- job_or_default(job, "continuity_correction", 1)
     
     set.seed(runtime_options$random_seed)
     global_consumption <- build_global_consumption_reference()
@@ -2452,7 +2495,8 @@ run_mi_class_model_pipeline <- function(job) {
         data <- scale_and_log_transform(
             data,
             global_consumption,
-            model_family = model_family
+            model_family = model_family,
+            continuity_correction = continuity_correction
         )
 
         # if global option MI_EQUAL=1, then set Weight to 1 for all rows
